@@ -13,9 +13,9 @@ const {
 } = require('discord.js');
 
 const cron = require('node-cron');
-const fs   = require('fs');
+const fs = require('fs/promises');
 
-const TOKEN     = process.env.DISCORD_TOKEN;
+const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID;
 
 if (!TOKEN || !CLIENT_ID) {
@@ -23,87 +23,106 @@ if (!TOKEN || !CLIENT_ID) {
   process.exit(1);
 }
 
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages
-  ]
-});
-
 const DAYS = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'];
 const ROLES = ['TOP', 'JGL', 'MID', 'ADC', 'SUPP'];
-
 const INVITE_CHANNEL = 'invitation-scrim';
-const RECAP_CHANNEL  = 'recap-scrim';
-const STATE_FILE     = './scrims-state.json';
+const RECAP_CHANNEL = 'recap-scrim';
+const STATE_FILE = './scrims-state.json';
+const TIMEZONE = 'Europe/Paris';
+const STATE_VERSION = 2;
 
 const scrims = {};
 for (const day of DAYS) {
   scrims[day] = { TOP: [], JGL: [], MID: [], ADC: [], SUPP: [] };
 }
 
-let userIds = {};
+let displayNames = {};
 
-function loadState() {
-  try {
-    if (fs.existsSync(STATE_FILE)) {
-      const data = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
-      if (data.scrims) {
-        for (const day of DAYS) {
-          if (data.scrims[day]) scrims[day] = data.scrims[day];
-        }
-      }
-      if (data.userIds) Object.assign(userIds, data.userIds);
-      console.log('État chargé depuis le fichier.');
+// --- Mutex per scrim day ---
+class Lock {
+  constructor() {
+    this._queue = [];
+    this._locked = false;
+  }
+
+  async acquire() {
+    if (!this._locked) {
+      this._locked = true;
+      return;
     }
-  } catch (err) {
-    console.error('Erreur chargement état:', err.message);
+    return new Promise(resolve => this._queue.push(resolve));
+  }
+
+  release() {
+    if (this._queue.length > 0) {
+      this._queue.shift()();
+    } else {
+      this._locked = false;
+    }
   }
 }
 
-function saveState() {
+const locks = {};
+for (const day of DAYS) locks[day] = new Lock();
+
+// --- State persistence ---
+async function loadState() {
   try {
-    fs.writeFileSync(STATE_FILE, JSON.stringify({ scrims, userIds }, null, 2));
+    const raw = await fs.readFile(STATE_FILE, 'utf8');
+    const data = JSON.parse(raw);
+
+    if (data.userIds && !data.displayNames) {
+      const inverse = {};
+      for (const [name, id] of Object.entries(data.userIds)) {
+        inverse[id] = name;
+      }
+      displayNames = inverse;
+
+      if (data.scrims) {
+        for (const day of DAYS) {
+          if (!data.scrims[day]) continue;
+          for (const role of ROLES) {
+            if (!data.scrims[day][role]) continue;
+            scrims[day][role] = data.scrims[day][role]
+              .map(name => data.userIds[name])
+              .filter(id => id != null);
+          }
+        }
+      }
+      console.log('État migré v1 → v2.');
+      await saveState();
+      return;
+    }
+
+    if (data.scrims) {
+      for (const day of DAYS) {
+        if (data.scrims[day]) scrims[day] = data.scrims[day];
+      }
+    }
+    if (data.displayNames) Object.assign(displayNames, data.displayNames);
+    console.log('État chargé depuis le fichier.');
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      console.error('Erreur chargement état:', err.message);
+    }
+  }
+}
+
+async function saveState() {
+  try {
+    await fs.writeFile(
+      STATE_FILE,
+      JSON.stringify({ version: STATE_VERSION, scrims, displayNames }, null, 2)
+    );
   } catch (err) {
     console.error('Erreur sauvegarde état:', err.message);
   }
 }
 
-loadState();
-
-const commands = [
-  new SlashCommandBuilder()
-    .setName('setup')
-    .setDescription('Créer les salons invitation-scrim et recap-scrim'),
-
-  new SlashCommandBuilder()
-    .setName('resetweek')
-    .setDescription('Reset toutes les inscriptions et renvoie les invitations')
-]
-.map(c => c.toJSON());
-
-const rest = new REST({ version: '10' }).setToken(TOKEN);
-
-(async () => {
-  try {
-    await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-    console.log('Commandes slash enregistrées.');
-  } catch (error) {
-    console.error('Erreur enregistrement commandes:', error);
-  }
-})();
-
-client.once(Events.ClientReady, () => {
-  console.log(`Bot connecté : ${client.user.tag}`);
-});
-
-client.on('error', err => {
-  console.error('Erreur client Discord:', err.message);
-});
-
+// --- Helpers ---
 const DAY_MAP = {
-  'lundi': 1, 'mardi': 2, 'mercredi': 3, 'jeudi': 4,
-  'vendredi': 5, 'samedi': 6, 'dimanche': 0
+  lundi: 1, mardi: 2, mercredi: 3, jeudi: 4,
+  vendredi: 5, samedi: 6, dimanche: 0
 };
 
 function isTodayScrimDay(day) {
@@ -118,10 +137,15 @@ function countFilled(day) {
   return ROLES.filter(role => scrims[day][role].length > 0).length;
 }
 
+function playerName(userId) {
+  return displayNames[userId] || `<@${userId}>`;
+}
+
+// --- Message builders ---
 function buildInviteMessage(day) {
   const rosterParts = ROLES.map(role => {
     const players = scrims[day][role];
-    return `**${role}** : ${players.length > 0 ? players[0] : 'libre'}`;
+    return `**${role}** : ${players.length > 0 ? playerName(players[0]) : 'libre'}`;
   });
 
   let text = `## ${day.toUpperCase()} — SCRIM\n`;
@@ -130,7 +154,7 @@ function buildInviteMessage(day) {
   const subs = [];
   for (const role of ROLES) {
     for (let i = 1; i < scrims[day][role].length; i++) {
-      subs.push(`${scrims[day][role][i]} (${role})`);
+      subs.push(`${playerName(scrims[day][role][i])} (${role})`);
     }
   }
 
@@ -142,24 +166,23 @@ function buildRecapMessage() {
   let text = `## 📋 RÉCAPITULATIF SCRIM — SEMAINE EN COURS\n\n`;
 
   for (const day of DAYS) {
-    const filled   = countFilled(day);
+    const filled = countFilled(day);
     const complete = isComplete(day);
-    const icon     = complete ? '✅' : filled > 0 ? '⚠️' : '❌';
+    const icon = complete ? '✅' : filled > 0 ? '⚠️' : '❌';
 
     text += `${icon} **${day.toUpperCase()}** (${filled}/5)\n`;
 
     if (filled > 0) {
       const parts = ROLES.map(role => {
         const p = scrims[day][role];
-        return `${role}: ${p.length > 0 ? p[0] : 'libre'}`;
+        return `${role}: ${p.length > 0 ? playerName(p[0]) : 'libre'}`;
       });
-      text += `${parts.join(' | ')}\n`;
+      text += parts.join(' | ') + '\n';
 
-      // Afficher les remplaçants avec leur rôle
       const subs = [];
       for (const role of ROLES) {
         for (let i = 1; i < scrims[day][role].length; i++) {
-          subs.push(`${scrims[day][role][i]} (${role})`);
+          subs.push(`${playerName(scrims[day][role][i])} (${role})`);
         }
       }
       if (subs.length > 0) {
@@ -175,22 +198,29 @@ function buildRecapMessage() {
   return text;
 }
 
+// --- Button builder ---
 function buildButtons(day) {
-  const row1 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`TOP:${day}`).setLabel('TOP').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId(`JGL:${day}`).setLabel('JGL').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId(`MID:${day}`).setLabel('MID').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId(`ADC:${day}`).setLabel('ADC').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId(`SUPP:${day}`).setLabel('SUPP').setStyle(ButtonStyle.Primary)
-  );
+  const roleButtons = ROLES.map(role => {
+    const taken = scrims[day][role].length > 0;
+    return new ButtonBuilder()
+      .setCustomId(`${role}:${day}`)
+      .setLabel(`${taken ? '🔴' : '🟢'} ${role}`)
+      .setStyle(taken ? ButtonStyle.Secondary : ButtonStyle.Primary);
+  });
+
+  const row1 = new ActionRowBuilder().addComponents(...roleButtons);
 
   const row2 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`REMOVE:${day}`).setLabel('Se désinscrire').setStyle(ButtonStyle.Danger)
+    new ButtonBuilder()
+      .setCustomId(`REMOVE:${day}`)
+      .setLabel('Se désinscrire')
+      .setStyle(ButtonStyle.Danger)
   );
 
   return [row1, row2];
 }
 
+// --- Channel helpers ---
 async function getOrCreateChannel(guild, name) {
   let channel = guild.channels.cache.find(c => c.name === name);
   if (!channel) {
@@ -205,12 +235,13 @@ async function getOrCreateChannel(guild, name) {
   return channel;
 }
 
+// --- Recap update ---
 async function updateRecap(guild) {
   const recapChannel = guild.channels.cache.find(c => c.name === RECAP_CHANNEL);
   if (!recapChannel) return;
 
   const messages = await recapChannel.messages.fetch({ limit: 10 });
-  const existing  = messages.find(m => m.author.id === client.user.id);
+  const existing = messages.find(m => m.author.id === client.user.id);
 
   if (existing) {
     await existing.edit({ content: buildRecapMessage() });
@@ -219,48 +250,52 @@ async function updateRecap(guild) {
   }
 }
 
+// --- Notifications ---
 async function notifyComplete(guild, day) {
   const recapChannel = guild.channels.cache.find(c => c.name === RECAP_CHANNEL);
   if (!recapChannel) return;
 
-  const mentions = ROLES.map(role => {
-    const uid = userIds[scrims[day][role][0]];
-    return uid ? `<@${uid}>` : scrims[day][role][0];
-  }).join(' ');
-
+  const mentions = ROLES.map(role => `<@${scrims[day][role][0]}>`).join(' ');
   await recapChannel.send(
     `🎮 **L'équipe du ${day.toUpperCase()} est complète !**\n${mentions}\nScrim ${day} confirmé ! 🏆`
   );
 }
 
-async function notifyIncomplete(guild, day, cancelledUsername) {
+async function notifyIncomplete(guild, day, cancelledUserId) {
   const recapChannel = guild.channels.cache.find(c => c.name === RECAP_CHANNEL);
   if (!recapChannel) return;
 
   const missingRoles = ROLES.filter(role => scrims[day][role].length === 0);
-
   const remainingMentions = ROLES
     .filter(role => scrims[day][role].length > 0)
-    .map(role => {
-      const uid = userIds[scrims[day][role][0]];
-      return uid ? `<@${uid}>` : scrims[day][role][0];
-    }).join(' ');
+    .map(role => `<@${scrims[day][role][0]}>`)
+    .join(' ');
 
   let msg = `⚠️ **Annulation tardive — ${day.toUpperCase()}**\n`;
-  msg += `**${cancelledUsername}** s'est désinscrit(e). L'équipe n'est plus complète.\n`;
+  msg += `**${playerName(cancelledUserId)}** s'est désinscrit(e). L'équipe n'est plus complète.\n`;
   msg += `**Poste(s) libre(s)** : ${missingRoles.join(', ')}\n`;
   if (remainingMentions) msg += `${remainingMentions} — un remplaçant est recherché !`;
 
   await recapChannel.send(msg);
 }
 
+async function notifyAutoPromote(guild, day, role, promotedId) {
+  const recapChannel = guild.channels.cache.find(c => c.name === RECAP_CHANNEL);
+  if (!recapChannel) return;
+
+  await recapChannel.send(
+    `🔄 **${playerName(promotedId)}** a été promu(e) remplaçant → titulaire sur le poste **${role}** (${day.toUpperCase()}).`
+  );
+}
+
+// --- Full reset ---
 async function fullReset(guild) {
   for (const day of DAYS) {
     for (const role of ROLES) {
       scrims[day][role] = [];
     }
   }
-  saveState();
+  await saveState();
 
   const inviteChannel = await getOrCreateChannel(guild, INVITE_CHANNEL);
   const msgs = await inviteChannel.messages.fetch({ limit: 100 });
@@ -271,9 +306,10 @@ async function fullReset(guild) {
     await inviteChannel.send({ content: buildInviteMessage(day), components: buildButtons(day) });
   }
 
-  const recapChannel  = await getOrCreateChannel(guild, RECAP_CHANNEL);
-  const recapMsgs     = await recapChannel.messages.fetch({ limit: 10 });
+  const recapChannel = await getOrCreateChannel(guild, RECAP_CHANNEL);
+  const recapMsgs = await recapChannel.messages.fetch({ limit: 10 });
   const existingRecap = recapMsgs.find(m => m.author.id === client.user.id);
+
   if (existingRecap) {
     await existingRecap.edit({ content: buildRecapMessage() });
   } else {
@@ -281,90 +317,171 @@ async function fullReset(guild) {
   }
 }
 
+// --- Client setup ---
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages]
+});
+
+client.on('error', err => {
+  console.error('Erreur client Discord:', err.message);
+});
+
+// --- Slash commands ---
+const commands = [
+  new SlashCommandBuilder()
+    .setName('setup')
+    .setDescription('Créer les salons invitation-scrim et recap-scrim'),
+  new SlashCommandBuilder()
+    .setName('resetweek')
+    .setDescription('Reset toutes les inscriptions et renvoie les invitations')
+].map(c => c.toJSON());
+
+const rest = new REST({ version: '10' }).setToken(TOKEN);
+
+(async () => {
+  try {
+    await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
+    console.log('Commandes slash enregistrées.');
+  } catch (error) {
+    console.error('Erreur enregistrement commandes:', error);
+  }
+})();
+
+// --- Events ---
+client.once(Events.ClientReady, () => {
+  console.log(`Bot connecté : ${client.user.tag}`);
+});
+
 client.on(Events.InteractionCreate, async interaction => {
   if (interaction.isChatInputCommand()) {
-
-    if (interaction.commandName === 'setup') {
-      await interaction.deferReply({ ephemeral: true });
-
-      const inviteChannel = await getOrCreateChannel(interaction.guild, INVITE_CHANNEL);
-      const recapChannel  = await getOrCreateChannel(interaction.guild, RECAP_CHANNEL);
-
-      for (const day of DAYS) {
-        await inviteChannel.send({ content: buildInviteMessage(day), components: buildButtons(day) });
-      }
-      await recapChannel.send({ content: buildRecapMessage() });
-
-      await interaction.editReply(`Salons <#${inviteChannel.id}> et <#${recapChannel.id}> prêts !`);
-    }
-
-    if (interaction.commandName === 'resetweek') {
-      await interaction.deferReply({ ephemeral: true });
-      await fullReset(interaction.guild);
-
-      const inviteChannel = interaction.guild.channels.cache.find(c => c.name === INVITE_CHANNEL);
-      const recapChannel  = interaction.guild.channels.cache.find(c => c.name === RECAP_CHANNEL);
-
-      await interaction.editReply(
-        `Semaine réinitialisée ! Invitations dans <#${inviteChannel?.id}>, récap dans <#${recapChannel?.id}>.`
-      );
-    }
-  }
-
-  if (interaction.isButton()) {
-    try {
-      const [action, day] = interaction.customId.split(':');
-
-      if (!day || !DAYS.includes(day)) {
-        await interaction.deferUpdate();
-        return;
-      }
-
-      const username = interaction.user.username;
-      const userId   = interaction.user.id;
-
-      userIds[username] = userId;
-
-      const wasComplete = isComplete(day);
-
-      for (const role of ROLES) {
-        scrims[day][role] = scrims[day][role].filter(p => p !== username);
-      }
-
-      if (action !== 'REMOVE') {
-        scrims[day][action].push(username);
-      }
-
-      saveState();
-
-      await interaction.update({
-        content: buildInviteMessage(day),
-        components: buildButtons(day)
-      });
-
-      await updateRecap(interaction.guild);
-
-      if (!wasComplete && isComplete(day)) {
-        await notifyComplete(interaction.guild, day);
-      }
-
-      if (wasComplete && !isComplete(day) && isTodayScrimDay(day)) {
-        await notifyIncomplete(interaction.guild, day, username);
-      }
-    } catch (err) {
-      console.error('Erreur interaction bouton:', err.message);
-      if (!interaction.replied && !interaction.deferred) {
-        await interaction.deferUpdate().catch(() => {});
-      }
-    }
+    await handleCommand(interaction);
+  } else if (interaction.isButton()) {
+    await handleButton(interaction);
   }
 });
 
+async function handleCommand(interaction) {
+  const { commandName, member, guild } = interaction;
+
+  if (!member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+    return interaction.reply({
+      content: 'Seuls les administrateurs peuvent utiliser cette commande.',
+      ephemeral: true
+    });
+  }
+
+  if (commandName === 'setup') {
+    await interaction.deferReply({ ephemeral: true });
+    const inviteChannel = await getOrCreateChannel(guild, INVITE_CHANNEL);
+    const recapChannel = await getOrCreateChannel(guild, RECAP_CHANNEL);
+
+    for (const day of DAYS) {
+      await inviteChannel.send({ content: buildInviteMessage(day), components: buildButtons(day) });
+    }
+    await recapChannel.send({ content: buildRecapMessage() });
+
+    await interaction.editReply(`Salons <#${inviteChannel.id}> et <#${recapChannel.id}> prêts !`);
+  }
+
+  if (commandName === 'resetweek') {
+    await interaction.deferReply({ ephemeral: true });
+    await fullReset(guild);
+
+    const inviteChannel = guild.channels.cache.find(c => c.name === INVITE_CHANNEL);
+    const recapChannel = guild.channels.cache.find(c => c.name === RECAP_CHANNEL);
+
+    await interaction.editReply(
+      `Semaine réinitialisée ! Invitations dans <#${inviteChannel?.id}>, récap dans <#${recapChannel?.id}>.`
+    );
+  }
+}
+
+async function handleButton(interaction) {
+  const [action, day] = interaction.customId.split(':');
+
+  if (!day || !DAYS.includes(day)) {
+    await interaction.deferUpdate();
+    return;
+  }
+
+  const lock = locks[day];
+  await lock.acquire();
+
+  try {
+    const userId = interaction.user.id;
+    displayNames[userId] = interaction.user.username;
+
+    const wasComplete = isComplete(day);
+    const promotions = [];
+
+    for (const role of ROLES) {
+      if (action !== 'REMOVE' && role === action) continue;
+
+      const idx = scrims[day][role].indexOf(userId);
+      if (idx === -1) continue;
+
+      scrims[day][role].splice(idx, 1);
+
+      if (idx === 0 && scrims[day][role].length > 0) {
+        promotions.push({ role, promotedId: scrims[day][role][0] });
+      }
+    }
+
+    if (action !== 'REMOVE' && !scrims[day][action].includes(userId)) {
+      scrims[day][action].push(userId);
+    }
+
+    await saveState();
+
+    await interaction.update({
+      content: buildInviteMessage(day),
+      components: buildButtons(day)
+    });
+
+    await updateRecap(interaction.guild);
+
+    for (const { role: promRole, promotedId } of promotions) {
+      await notifyAutoPromote(interaction.guild, day, promRole, promotedId);
+    }
+
+    if (!wasComplete && isComplete(day)) {
+      await notifyComplete(interaction.guild, day);
+    }
+
+    if (wasComplete && !isComplete(day) && isTodayScrimDay(day)) {
+      await notifyIncomplete(interaction.guild, day, userId);
+    }
+  } catch (err) {
+    console.error('Erreur interaction bouton:', err.message);
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.deferUpdate().catch(() => {});
+    }
+  } finally {
+    lock.release();
+  }
+}
+
+// --- Cron: weekly reset every Monday at midnight ---
 cron.schedule('0 0 * * 1', async () => {
   console.log('Reset automatique de la semaine');
   for (const guild of client.guilds.cache.values()) {
     await fullReset(guild);
   }
-});
+}, { timezone: TIMEZONE });
 
-client.login(TOKEN);
+// --- Graceful shutdown ---
+async function shutdown() {
+  console.log('Arrêt en cours...');
+  await saveState();
+  client.destroy();
+  process.exit(0);
+}
+
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
+
+// --- Start ---
+(async () => {
+  await loadState();
+  client.login(TOKEN);
+})();
