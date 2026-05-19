@@ -154,6 +154,17 @@ function buildRecapMessage() {
         return `${role}: ${p.length > 0 ? p[0] : 'libre'}`;
       });
       text += `${parts.join(' | ')}\n`;
+
+      // Afficher les remplaçants avec leur rôle
+      const subs = [];
+      for (const role of ROLES) {
+        for (let i = 1; i < scrims[day][role].length; i++) {
+          subs.push(`${scrims[day][role][i]} (${role})`);
+        }
+      }
+      if (subs.length > 0) {
+        text += `**Remplaçants** : ${subs.join(', ')}\n`;
+      }
     } else {
       text += `Aucun inscrit\n`;
     }
