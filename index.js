@@ -37,6 +37,7 @@ for (const day of DAYS) {
 }
 
 let displayNames = {};
+let stateLoadedFromFile = false;
 
 // --- Mutex per scrim day ---
 class Lock {
@@ -90,6 +91,7 @@ async function loadState() {
         }
       }
       console.log('État migré v1 → v2.');
+      stateLoadedFromFile = true;
       await saveState();
       return;
     }
@@ -101,6 +103,7 @@ async function loadState() {
     }
     if (data.displayNames) Object.assign(displayNames, data.displayNames);
     console.log('État chargé depuis le fichier.');
+    stateLoadedFromFile = true;
   } catch (err) {
     if (err.code !== 'ENOENT') {
       console.error('Erreur chargement état:', err.message);
@@ -139,6 +142,108 @@ function countFilled(day) {
 
 function playerName(userId) {
   return displayNames[userId] || `<@${userId}>`;
+}
+
+function resolveUserId(rawName, nameToId) {
+  const mentionMatch = rawName.match(/^<@!?(\d+)>$/);
+  if (mentionMatch) return mentionMatch[1];
+  return nameToId.get(rawName) || null;
+}
+
+async function recoverStateFromChannels(guild) {
+  const inviteChannel = guild.channels.cache.find(c => c.name === INVITE_CHANNEL);
+  if (!inviteChannel) return false;
+
+  const msgs = await inviteChannel.messages.fetch({ limit: 50 });
+  const botMsgs = msgs.filter(m => m.author.id === client.user.id);
+
+  if (botMsgs.size === 0) return false;
+
+  try {
+    await guild.members.fetch();
+  } catch (err) {
+    console.error('Impossible de fetch les membres (activer GuildMembers intent):', err.message);
+    return false;
+  }
+
+  const nameToId = new Map();
+  for (const [, member] of guild.members.cache) {
+    nameToId.set(member.user.username, member.user.id);
+    displayNames[member.user.id] = member.user.username;
+  }
+
+  let recovered = false;
+
+  for (const msg of botMsgs.values()) {
+    const lines = msg.content.split('\n');
+
+    const headerMatch = lines[0]?.match(/^## (\S+) — SCRIM$/);
+    if (!headerMatch) continue;
+    const day = headerMatch[1].toLowerCase();
+    if (!DAYS.includes(day)) continue;
+
+    recovered = true;
+    scrims[day] = { TOP: [], JGL: [], MID: [], ADC: [], SUPP: [] };
+
+    if (lines[1]) {
+      const parts = lines[1].split(' | ');
+      for (const part of parts) {
+        const m = part.trim().match(/^\*\*(\w+)\*\* : (.+)$/);
+        if (!m) continue;
+        const role = m[1];
+        const rawName = m[2].trim();
+        if (rawName === 'libre' || !ROLES.includes(role)) continue;
+
+        const id = resolveUserId(rawName, nameToId);
+        if (id) scrims[day][role].push(id);
+      }
+    }
+
+    for (const line of lines) {
+      if (!line.startsWith('**Remplaçants**')) continue;
+      const content = line.replace(/^\*\*Remplaçants\*\* : /, '');
+      if (content === 'Aucun') break;
+
+      const subs = content.split(', ');
+      for (const sub of subs) {
+        const m = sub.trim().match(/^(.+) \((\w+)\)$/);
+        if (!m) continue;
+        const rawName = m[1].trim();
+        const role = m[2];
+        if (!ROLES.includes(role)) continue;
+
+        const id = resolveUserId(rawName, nameToId);
+        if (id) scrims[day][role].push(id);
+      }
+      break;
+    }
+  }
+
+  return recovered;
+}
+
+async function syncGuildChannels(guild) {
+  const inviteChannel = guild.channels.cache.find(c => c.name === INVITE_CHANNEL);
+  if (!inviteChannel) return;
+
+  const msgs = await inviteChannel.messages.fetch({ limit: 50 });
+  const botMsgs = msgs.filter(m => m.author.id === client.user.id);
+
+  for (const msg of botMsgs.values()) {
+    const lines = msg.content.split('\n');
+    const headerMatch = lines[0]?.match(/^## (\S+) — SCRIM$/);
+    if (!headerMatch) continue;
+    const day = headerMatch[1].toLowerCase();
+    if (!DAYS.includes(day)) continue;
+
+    try {
+      await msg.edit({ content: buildInviteMessage(day), components: buildButtons(day) });
+    } catch (err) {
+      console.error(`Erreur sync message ${day}:`, err.message);
+    }
+  }
+
+  await updateRecap(guild);
 }
 
 // --- Message builders ---
@@ -319,7 +424,11 @@ async function fullReset(guild) {
 
 // --- Client setup ---
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.GuildMembers
+  ]
 });
 
 client.on('error', err => {
@@ -348,8 +457,20 @@ const rest = new REST({ version: '10' }).setToken(TOKEN);
 })();
 
 // --- Events ---
-client.once(Events.ClientReady, () => {
+client.once(Events.ClientReady, async () => {
   console.log(`Bot connecté : ${client.user.tag}`);
+
+  for (const guild of client.guilds.cache.values()) {
+    if (!stateLoadedFromFile) {
+      const recovered = await recoverStateFromChannels(guild);
+      if (recovered) {
+        await saveState();
+        console.log('État récupéré depuis les messages du salon.');
+      }
+    }
+
+    await syncGuildChannels(guild);
+  }
 });
 
 client.on(Events.InteractionCreate, async interaction => {
