@@ -30,7 +30,7 @@ const DAYS = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dima
 const ROLES = ['TOP', 'JGL', 'MID', 'ADC', 'SUPP'];
 const INVITE_CHANNEL = 'invitation-scrim';
 const RECAP_CHANNEL = 'recap-scrim';
-const STATE_FILE = './scrims-state.json';
+const STATE_FILE = process.env.STATE_FILE || './scrims-state.json';
 const TIMEZONE = 'Europe/Paris';
 const STATE_VERSION = 3;
 
