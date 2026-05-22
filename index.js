@@ -9,7 +9,10 @@ const {
   PermissionsBitField,
   ActionRowBuilder,
   ButtonBuilder,
-  ButtonStyle
+  ButtonStyle,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle
 } = require('discord.js');
 
 const cron = require('node-cron');
@@ -29,13 +32,19 @@ const INVITE_CHANNEL = 'invitation-scrim';
 const RECAP_CHANNEL = 'recap-scrim';
 const STATE_FILE = './scrims-state.json';
 const TIMEZONE = 'Europe/Paris';
-const STATE_VERSION = 2;
+const STATE_VERSION = 3;
 
+// État global
 const scrims = {};
 for (const day of DAYS) {
-  scrims[day] = { TOP: [], JGL: [], MID: [], ADC: [], SUPP: [] };
+  scrims[day] = {
+    available: [],
+    lineup: { TOP: null, JGL: null, MID: null, ADC: null, SUPP: null },
+    substitutes: []
+  };
 }
 
+let playerProfiles = {};
 let displayNames = {};
 let stateLoadedFromFile = false;
 
@@ -72,36 +81,14 @@ async function loadState() {
     const raw = await fs.readFile(STATE_FILE, 'utf8');
     const data = JSON.parse(raw);
 
-    if (data.userIds && !data.displayNames) {
-      const inverse = {};
-      for (const [name, id] of Object.entries(data.userIds)) {
-        inverse[id] = name;
-      }
-      displayNames = inverse;
-
-      if (data.scrims) {
-        for (const day of DAYS) {
-          if (!data.scrims[day]) continue;
-          for (const role of ROLES) {
-            if (!data.scrims[day][role]) continue;
-            scrims[day][role] = data.scrims[day][role]
-              .map(name => data.userIds[name])
-              .filter(id => id != null);
-          }
-        }
-      }
-      console.log('État migré v1 → v2.');
-      stateLoadedFromFile = true;
-      await saveState();
-      return;
-    }
-
+    if (data.playerProfiles) playerProfiles = data.playerProfiles;
+    if (data.displayNames) displayNames = data.displayNames;
     if (data.scrims) {
       for (const day of DAYS) {
         if (data.scrims[day]) scrims[day] = data.scrims[day];
       }
     }
-    if (data.displayNames) Object.assign(displayNames, data.displayNames);
+
     console.log('État chargé depuis le fichier.');
     stateLoadedFromFile = true;
   } catch (err) {
@@ -115,7 +102,7 @@ async function saveState() {
   try {
     await fs.writeFile(
       STATE_FILE,
-      JSON.stringify({ version: STATE_VERSION, scrims, displayNames }, null, 2)
+      JSON.stringify({ version: STATE_VERSION, scrims, playerProfiles, displayNames }, null, 2)
     );
   } catch (err) {
     console.error('Erreur sauvegarde état:', err.message);
@@ -123,147 +110,130 @@ async function saveState() {
 }
 
 // --- Helpers ---
-const DAY_MAP = {
-  lundi: 1, mardi: 2, mercredi: 3, jeudi: 4,
-  vendredi: 5, samedi: 6, dimanche: 0
-};
-
-function isTodayScrimDay(day) {
-  return new Date().getDay() === DAY_MAP[day];
-}
-
-function isComplete(day) {
-  return ROLES.every(role => scrims[day][role].length > 0);
-}
-
-function countFilled(day) {
-  return ROLES.filter(role => scrims[day][role].length > 0).length;
-}
-
 function playerName(userId) {
   return displayNames[userId] || `<@${userId}>`;
 }
 
-function resolveUserId(rawName, nameToId) {
-  const mentionMatch = rawName.match(/^<@!?(\d+)>$/);
-  if (mentionMatch) return mentionMatch[1];
-  return nameToId.get(rawName) || null;
+function hasProfile(userId) {
+  return playerProfiles[userId] != null;
 }
 
-async function recoverStateFromChannels(guild) {
-  const inviteChannel = guild.channels.cache.find(c => c.name === INVITE_CHANNEL);
-  if (!inviteChannel) return false;
+// --- Scoring & Lineup Calculation ---
+function calculateBestLineup(day) {
+  const available = scrims[day].available;
 
-  const msgs = await inviteChannel.messages.fetch({ limit: 50 });
-  const botMsgs = msgs.filter(m => m.author.id === client.user.id);
-
-  if (botMsgs.size === 0) return false;
-
-  try {
-    await guild.members.fetch();
-  } catch (err) {
-    console.error('Impossible de fetch les membres (activer GuildMembers intent):', err.message);
-    return false;
+  if (available.length < 5) {
+    return { lineup: null, substitutes: [] };
   }
 
-  const nameToId = new Map();
-  for (const [, member] of guild.members.cache) {
-    nameToId.set(member.user.username, member.user.id);
-    displayNames[member.user.id] = member.user.username;
+  const combinations = generateCombinations(available, 5);
+  let bestScore = -1;
+  let bestCombination = null;
+
+  for (const combo of combinations) {
+    const score = calculateComboScore(combo);
+    if (score > bestScore) {
+      bestScore = score;
+      bestCombination = combo;
+    }
   }
 
-  let recovered = false;
+  if (!bestCombination) {
+    return { lineup: null, substitutes: [] };
+  }
 
-  for (const msg of botMsgs.values()) {
-    const lines = msg.content.split('\n');
+  const lineup = assignRolesToCombo(bestCombination);
+  const substitutes = available.filter(id => !bestCombination.includes(id));
 
-    const headerMatch = lines[0]?.match(/^## (\S+) — SCRIM$/);
-    if (!headerMatch) continue;
-    const day = headerMatch[1].toLowerCase();
-    if (!DAYS.includes(day)) continue;
+  return { lineup, substitutes };
+}
 
-    recovered = true;
-    scrims[day] = { TOP: [], JGL: [], MID: [], ADC: [], SUPP: [] };
+function generateCombinations(arr, size) {
+  if (size === 1) return arr.map(x => [x]);
+  const result = [];
+  for (let i = 0; i < arr.length - size + 1; i++) {
+    const head = arr[i];
+    const tail = generateCombinations(arr.slice(i + 1), size - 1);
+    for (const t of tail) {
+      result.push([head, ...t]);
+    }
+  }
+  return result;
+}
 
-    if (lines[1]) {
-      const parts = lines[1].split(' | ');
-      for (const part of parts) {
-        const m = part.trim().match(/^\*\*(\w+)\*\* : (.+)$/);
-        if (!m) continue;
-        const role = m[1];
-        const rawName = m[2].trim();
-        if (rawName === 'libre' || !ROLES.includes(role)) continue;
+function calculateComboScore(combo) {
+  let score = 0;
+  const used = new Set();
 
-        const id = resolveUserId(rawName, nameToId);
-        if (id) scrims[day][role].push(id);
+  for (const userId of combo) {
+    const prefs = playerProfiles[userId] || {};
+    let bestRole = null;
+    let bestScore = 0;
+
+    for (const role of ROLES) {
+      if (!used.has(role) && (prefs[role] || 0) > bestScore) {
+        bestScore = prefs[role] || 0;
+        bestRole = role;
       }
     }
 
-    for (const line of lines) {
-      if (!line.startsWith('**Remplaçants**')) continue;
-      const content = line.replace(/^\*\*Remplaçants\*\* : /, '');
-      if (content === 'Aucun') break;
-
-      const subs = content.split(', ');
-      for (const sub of subs) {
-        const m = sub.trim().match(/^(.+) \((\w+)\)$/);
-        if (!m) continue;
-        const rawName = m[1].trim();
-        const role = m[2];
-        if (!ROLES.includes(role)) continue;
-
-        const id = resolveUserId(rawName, nameToId);
-        if (id) scrims[day][role].push(id);
-      }
-      break;
+    if (bestRole) {
+      used.add(bestRole);
+      score += bestScore;
     }
   }
 
-  return recovered;
+  return score;
 }
 
-async function syncGuildChannels(guild) {
-  const inviteChannel = guild.channels.cache.find(c => c.name === INVITE_CHANNEL);
-  if (!inviteChannel) return;
+function assignRolesToCombo(combo) {
+  const lineup = { TOP: null, JGL: null, MID: null, ADC: null, SUPP: null };
+  const used = new Set();
 
-  const msgs = await inviteChannel.messages.fetch({ limit: 50 });
-  const botMsgs = msgs.filter(m => m.author.id === client.user.id);
+  for (const userId of combo) {
+    const prefs = playerProfiles[userId] || {};
+    let bestRole = null;
+    let bestScore = 0;
 
-  for (const msg of botMsgs.values()) {
-    const lines = msg.content.split('\n');
-    const headerMatch = lines[0]?.match(/^## (\S+) — SCRIM$/);
-    if (!headerMatch) continue;
-    const day = headerMatch[1].toLowerCase();
-    if (!DAYS.includes(day)) continue;
+    for (const role of ROLES) {
+      if (!used.has(role) && (prefs[role] || 0) > bestScore) {
+        bestScore = prefs[role] || 0;
+        bestRole = role;
+      }
+    }
 
-    try {
-      await msg.edit({ content: buildInviteMessage(day), components: buildButtons(day) });
-    } catch (err) {
-      console.error(`Erreur sync message ${day}:`, err.message);
+    if (bestRole) {
+      used.add(bestRole);
+      lineup[bestRole] = userId;
     }
   }
 
-  await updateRecap(guild);
+  return lineup;
 }
 
 // --- Message builders ---
 function buildInviteMessage(day) {
-  const rosterParts = ROLES.map(role => {
-    const players = scrims[day][role];
-    return `**${role}** : ${players.length > 0 ? playerName(players[0]) : 'libre'}`;
-  });
+  const available = scrims[day].available.length;
+  const lineup = scrims[day].lineup;
+  const complete = ROLES.every(role => lineup[role] != null);
 
   let text = `## ${day.toUpperCase()} — SCRIM\n`;
-  text += rosterParts.join(' | ') + '\n';
+  text += `**Inscrits:** ${available}/5 ${complete ? '✅' : '⚠️'}\n\n`;
 
-  const subs = [];
-  for (const role of ROLES) {
-    for (let i = 1; i < scrims[day][role].length; i++) {
-      subs.push(`${playerName(scrims[day][role][i])} (${role})`);
+  if (complete) {
+    text += `**Lineup:**\n`;
+    for (const role of ROLES) {
+      text += `**${role}** : ${playerName(lineup[role])}\n`;
     }
+
+    const subs = scrims[day].substitutes;
+    if (subs.length > 0) {
+      text += `\n**Remplaçants:** ${subs.map(id => playerName(id)).join(', ')}\n`;
+    }
+  } else {
+    text += `En attente de plus d'inscrits...\n`;
   }
 
-  text += `**Remplaçants** : ${subs.length > 0 ? subs.join(', ') : 'Aucun'}`;
   return text;
 }
 
@@ -271,28 +241,23 @@ function buildRecapMessage() {
   let text = `## 📋 RÉCAPITULATIF SCRIM — SEMAINE EN COURS\n\n`;
 
   for (const day of DAYS) {
-    const filled = countFilled(day);
-    const complete = isComplete(day);
-    const icon = complete ? '✅' : filled > 0 ? '⚠️' : '❌';
+    const lineup = scrims[day].lineup;
+    const complete = ROLES.every(role => lineup[role] != null);
+    const icon = complete ? '✅' : scrims[day].available.length > 0 ? '⚠️' : '❌';
 
-    text += `${icon} **${day.toUpperCase()}** (${filled}/5)\n`;
+    text += `${icon} **${day.toUpperCase()}** (${scrims[day].available.length}/5)\n`;
 
-    if (filled > 0) {
-      const parts = ROLES.map(role => {
-        const p = scrims[day][role];
-        return `${role}: ${p.length > 0 ? playerName(p[0]) : 'libre'}`;
-      });
-      text += parts.join(' | ') + '\n';
-
-      const subs = [];
+    if (complete) {
       for (const role of ROLES) {
-        for (let i = 1; i < scrims[day][role].length; i++) {
-          subs.push(`${playerName(scrims[day][role][i])} (${role})`);
-        }
+        text += `${role}: ${playerName(lineup[role])}\n`;
       }
+
+      const subs = scrims[day].substitutes;
       if (subs.length > 0) {
-        text += `**Remplaçants** : ${subs.join(', ')}\n`;
+        text += `**Remplaçants:** ${subs.map(id => playerName(id)).join(', ')}\n`;
       }
+    } else if (scrims[day].available.length > 0) {
+      text += `En attente...\n`;
     } else {
       text += `Aucun inscrit\n`;
     }
@@ -303,26 +268,22 @@ function buildRecapMessage() {
   return text;
 }
 
-// --- Button builder ---
-function buildButtons(day) {
-  const roleButtons = ROLES.map(role => {
-    const taken = scrims[day][role].length > 0;
+function buildDayButtons() {
+  const rows = [];
+  const dayButtons = DAYS.map(day => {
+    const available = scrims[day].available.length;
     return new ButtonBuilder()
-      .setCustomId(`${role}:${day}`)
-      .setLabel(`${taken ? '🔴' : '🟢'} ${role}`)
-      .setStyle(taken ? ButtonStyle.Secondary : ButtonStyle.Primary);
+      .setCustomId(`DISPO:${day}`)
+      .setLabel(`${day.toUpperCase()} (${available}/5)`)
+      .setStyle(ButtonStyle.Primary);
   });
 
-  const row1 = new ActionRowBuilder().addComponents(...roleButtons);
+  for (let i = 0; i < dayButtons.length; i += 3) {
+    const row = new ActionRowBuilder().addComponents(dayButtons.slice(i, i + 3));
+    rows.push(row);
+  }
 
-  const row2 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`REMOVE:${day}`)
-      .setLabel('Se désinscrire')
-      .setStyle(ButtonStyle.Danger)
-  );
-
-  return [row1, row2];
+  return rows;
 }
 
 // --- Channel helpers ---
@@ -355,50 +316,51 @@ async function updateRecap(guild) {
   }
 }
 
+// --- Sync all messages ---
+async function syncGuildChannels(guild) {
+  const inviteChannel = guild.channels.cache.find(c => c.name === INVITE_CHANNEL);
+  if (!inviteChannel) return;
+
+  const msgs = await inviteChannel.messages.fetch({ limit: 50 });
+  const botMsgs = msgs.filter(m => m.author.id === client.user.id);
+
+  for (const msg of botMsgs.values()) {
+    const lines = msg.content.split('\n');
+    const headerMatch = lines[0]?.match(/^## (\S+) — SCRIM$/);
+    if (!headerMatch) continue;
+    const day = headerMatch[1].toLowerCase();
+    if (!DAYS.includes(day)) continue;
+
+    try {
+      await msg.edit({ content: buildInviteMessage(day), components: buildDayButtons() });
+    } catch (err) {
+      console.error(`Erreur sync message ${day}:`, err.message);
+    }
+  }
+
+  await updateRecap(guild);
+}
+
 // --- Notifications ---
-async function notifyComplete(guild, day) {
+async function notifyLineupComplete(guild, day) {
   const recapChannel = guild.channels.cache.find(c => c.name === RECAP_CHANNEL);
   if (!recapChannel) return;
 
-  const mentions = ROLES.map(role => `<@${scrims[day][role][0]}>`).join(' ');
+  const lineup = scrims[day].lineup;
+  const mentions = ROLES.map(role => `<@${lineup[role]}>`).join(' ');
   await recapChannel.send(
     `🎮 **L'équipe du ${day.toUpperCase()} est complète !**\n${mentions}\nScrim ${day} confirmé ! 🏆`
-  );
-}
-
-async function notifyIncomplete(guild, day, cancelledUserId) {
-  const recapChannel = guild.channels.cache.find(c => c.name === RECAP_CHANNEL);
-  if (!recapChannel) return;
-
-  const missingRoles = ROLES.filter(role => scrims[day][role].length === 0);
-  const remainingMentions = ROLES
-    .filter(role => scrims[day][role].length > 0)
-    .map(role => `<@${scrims[day][role][0]}>`)
-    .join(' ');
-
-  let msg = `⚠️ **Annulation tardive — ${day.toUpperCase()}**\n`;
-  msg += `**${playerName(cancelledUserId)}** s'est désinscrit(e). L'équipe n'est plus complète.\n`;
-  msg += `**Poste(s) libre(s)** : ${missingRoles.join(', ')}\n`;
-  if (remainingMentions) msg += `${remainingMentions} — un remplaçant est recherché !`;
-
-  await recapChannel.send(msg);
-}
-
-async function notifyAutoPromote(guild, day, role, promotedId) {
-  const recapChannel = guild.channels.cache.find(c => c.name === RECAP_CHANNEL);
-  if (!recapChannel) return;
-
-  await recapChannel.send(
-    `🔄 **${playerName(promotedId)}** a été promu(e) remplaçant → titulaire sur le poste **${role}** (${day.toUpperCase()}).`
   );
 }
 
 // --- Full reset ---
 async function fullReset(guild) {
   for (const day of DAYS) {
-    for (const role of ROLES) {
-      scrims[day][role] = [];
-    }
+    scrims[day] = {
+      available: [],
+      lineup: { TOP: null, JGL: null, MID: null, ADC: null, SUPP: null },
+      substitutes: []
+    };
   }
   await saveState();
 
@@ -407,9 +369,11 @@ async function fullReset(guild) {
   for (const msg of msgs.filter(m => m.author.id === client.user.id).values()) {
     await msg.delete();
   }
-  for (const day of DAYS) {
-    await inviteChannel.send({ content: buildInviteMessage(day), components: buildButtons(day) });
-  }
+
+  await inviteChannel.send({
+    content: `# 📅 SÉLECTIONNEZ VOTRE DISPONIBILITÉ\n\nCliquez sur un jour pour vous inscrire ou vous désinscrire.`,
+    components: buildDayButtons()
+  });
 
   const recapChannel = await getOrCreateChannel(guild, RECAP_CHANNEL);
   const recapMsgs = await recapChannel.messages.fetch({ limit: 10 });
@@ -442,7 +406,10 @@ const commands = [
     .setDescription('Créer les salons invitation-scrim et recap-scrim'),
   new SlashCommandBuilder()
     .setName('resetweek')
-    .setDescription('Reset toutes les inscriptions et renvoie les invitations')
+    .setDescription('Reset toutes les inscriptions et renvoie les invitations'),
+  new SlashCommandBuilder()
+    .setName('setpref')
+    .setDescription('Définir vos préférences de rôles (1-3 points par rôle)')
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(TOKEN);
@@ -461,14 +428,6 @@ client.once(Events.ClientReady, async () => {
   console.log(`Bot connecté : ${client.user.tag}`);
 
   for (const guild of client.guilds.cache.values()) {
-    if (!stateLoadedFromFile) {
-      const recovered = await recoverStateFromChannels(guild);
-      if (recovered) {
-        await saveState();
-        console.log('État récupéré depuis les messages du salon.');
-      }
-    }
-
     await syncGuildChannels(guild);
   }
 });
@@ -478,11 +437,38 @@ client.on(Events.InteractionCreate, async interaction => {
     await handleCommand(interaction);
   } else if (interaction.isButton()) {
     await handleButton(interaction);
+  } else if (interaction.isModalSubmit()) {
+    await handleModal(interaction);
   }
 });
 
 async function handleCommand(interaction) {
-  const { commandName, member, guild } = interaction;
+  const { commandName, member, guild, user } = interaction;
+
+  if (commandName === 'setpref') {
+    displayNames[user.id] = user.username;
+
+    const modal = new ModalBuilder()
+      .setCustomId(`PREF_MODAL:${user.id}`)
+      .setTitle('Préférences de rôles');
+
+    for (const role of ROLES) {
+      const current = playerProfiles[user.id]?.[role] || 1;
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId(`PREF_${role}`)
+            .setLabel(`${role} (1-3)`)
+            .setStyle(TextInputStyle.Short)
+            .setValue(String(current))
+            .setRequired(true)
+        )
+      );
+    }
+
+    await interaction.showModal(modal);
+    return;
+  }
 
   if (!member.permissions.has(PermissionsBitField.Flags.Administrator)) {
     return interaction.reply({
@@ -496,9 +482,10 @@ async function handleCommand(interaction) {
     const inviteChannel = await getOrCreateChannel(guild, INVITE_CHANNEL);
     const recapChannel = await getOrCreateChannel(guild, RECAP_CHANNEL);
 
-    for (const day of DAYS) {
-      await inviteChannel.send({ content: buildInviteMessage(day), components: buildButtons(day) });
-    }
+    await inviteChannel.send({
+      content: `# 📅 SÉLECTIONNEZ VOTRE DISPONIBILITÉ\n\nCliquez sur un jour pour vous inscrire ou vous désinscrire.`,
+      components: buildDayButtons()
+    });
     await recapChannel.send({ content: buildRecapMessage() });
 
     await interaction.editReply(`Salons <#${inviteChannel.id}> et <#${recapChannel.id}> prêts !`);
@@ -517,60 +504,105 @@ async function handleCommand(interaction) {
   }
 }
 
+async function handleModal(interaction) {
+  const { customId, user, guild } = interaction;
+
+  if (!customId.startsWith('PREF_MODAL:')) return;
+
+  const userId = customId.split(':')[1];
+  if (userId !== user.id) {
+    return interaction.reply({ content: 'Erreur: ID utilisateur ne correspond pas.', ephemeral: true });
+  }
+
+  if (!playerProfiles[userId]) {
+    playerProfiles[userId] = {};
+  }
+
+  let valid = true;
+  for (const role of ROLES) {
+    const value = interaction.fields.getTextInputValue(`PREF_${role}`);
+    const score = parseInt(value);
+
+    if (isNaN(score) || score < 1 || score > 3) {
+      valid = false;
+      break;
+    }
+
+    playerProfiles[userId][role] = score;
+  }
+
+  if (!valid) {
+    return interaction.reply({
+      content: 'Erreur: Chaque rôle doit avoir une valeur entre 1 et 3.',
+      ephemeral: true
+    });
+  }
+
+  displayNames[userId] = user.username;
+  await saveState();
+
+  await interaction.reply({
+    content: `✅ Préférences mises à jour!\n${ROLES.map(r => `${r}: ${playerProfiles[userId][r]}`).join(' | ')}`,
+    ephemeral: true
+  });
+}
+
 async function handleButton(interaction) {
   const [action, day] = interaction.customId.split(':');
 
-  if (!day || !DAYS.includes(day)) {
+  if (action !== 'DISPO' || !day || !DAYS.includes(day)) {
     await interaction.deferUpdate();
     return;
+  }
+
+  const userId = interaction.user.id;
+  displayNames[userId] = interaction.user.username;
+
+  if (!hasProfile(userId)) {
+    return interaction.reply({
+      content: '❌ Vous devez d\'abord définir vos préférences avec `/setpref`',
+      ephemeral: true
+    });
   }
 
   const lock = locks[day];
   await lock.acquire();
 
   try {
-    const userId = interaction.user.id;
-    displayNames[userId] = interaction.user.username;
+    const wasComplete = ROLES.every(role => scrims[day].lineup[role] != null);
+    const isAvailable = scrims[day].available.includes(userId);
 
-    const wasComplete = isComplete(day);
-    const promotions = [];
-
-    for (const role of ROLES) {
-      if (action !== 'REMOVE' && role === action) continue;
-
-      const idx = scrims[day][role].indexOf(userId);
-      if (idx === -1) continue;
-
-      scrims[day][role].splice(idx, 1);
-
-      if (idx === 0 && scrims[day][role].length > 0) {
-        promotions.push({ role, promotedId: scrims[day][role][0] });
-      }
+    if (isAvailable) {
+      scrims[day].available = scrims[day].available.filter(id => id !== userId);
+    } else {
+      scrims[day].available.push(userId);
     }
 
-    if (action !== 'REMOVE' && !scrims[day][action].includes(userId)) {
-      scrims[day][action].push(userId);
-    }
+    const { lineup, substitutes } = calculateBestLineup(day);
+    scrims[day].lineup = lineup || { TOP: null, JGL: null, MID: null, ADC: null, SUPP: null };
+    scrims[day].substitutes = substitutes;
 
     await saveState();
 
+    const inviteChannel = interaction.guild.channels.cache.find(c => c.name === INVITE_CHANNEL);
+    if (inviteChannel) {
+      const msgs = await inviteChannel.messages.fetch({ limit: 50 });
+      const mainMsg = msgs.find(m => m.author.id === client.user.id && m.content.includes('SÉLECTIONNEZ'));
+      if (mainMsg) {
+        await mainMsg.edit({ components: buildDayButtons() });
+      }
+    }
+
     await interaction.update({
       content: buildInviteMessage(day),
-      components: buildButtons(day)
+      components: []
     });
 
     await updateRecap(interaction.guild);
 
-    for (const { role: promRole, promotedId } of promotions) {
-      await notifyAutoPromote(interaction.guild, day, promRole, promotedId);
-    }
-
-    if (!wasComplete && isComplete(day)) {
-      await notifyComplete(interaction.guild, day);
-    }
-
-    if (wasComplete && !isComplete(day) && isTodayScrimDay(day)) {
-      await notifyIncomplete(interaction.guild, day, userId);
+    const isNowComplete = ROLES.every(role => scrims[day].lineup[role] != null);
+    if (!wasComplete && isNowComplete) {
+      await notifyLineupComplete(interaction.guild, day);
     }
   } catch (err) {
     console.error('Erreur interaction bouton:', err.message);
