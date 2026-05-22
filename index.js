@@ -217,11 +217,11 @@ function buildInviteContent() {
   const headers = DAYS.map(d => `${d.slice(0, 3).toUpperCase()} ${dayDate(d)}`);
   const counts = DAYS.map(d => String(scrims[d].available.length));
 
-  const anyComplete = DAYS.some(d =>
-    ROLES.every(r => scrims[d].lineup[r] != null)
-  );
+  const anyComplete = DAYS.some(d => ROLES.every(r => scrims[d].lineup[r] != null));
+  const hasAnySub = DAYS.some(d => scrims[d].substitutes.length > 0);
+  const maxSubs = Math.max(...DAYS.map(d => scrims[d].substitutes.length), 0);
 
-  const scores = anyComplete ? DAYS.map(d => {
+  const lineupScores = DAYS.map(d => {
     const complete = ROLES.every(r => scrims[d].lineup[r] != null);
     if (!complete) return '';
     let total = 0;
@@ -230,59 +230,78 @@ function buildInviteContent() {
       if (pid) total += playerProfiles[pid]?.[role] || 0;
     }
     return String(total);
-  }) : null;
-
-  const columns = DAYS.map(day => {
-    const lineup = scrims[day].lineup;
-    const complete = ROLES.every(role => lineup[role] != null);
-
-    if (complete) {
-      const cells = [];
-      for (const role of ROLES) {
-        const pid = lineup[role];
-        if (pid) {
-          const score = playerProfiles[pid]?.[role] || 0;
-          cells.push(`${playerName(pid)} (${role} ${score})`);
-        }
-      }
-      for (const sub of scrims[day].substitutes) {
-        cells.push(`${playerName(sub)} (sub)`);
-      }
-      return cells;
-    }
-    return scrims[day].available.map(id => playerName(id));
   });
 
-  const maxRows = Math.max(...columns.map(c => c.length), 0);
+  const roleCells = ROLES.map((role, ri) =>
+    DAYS.map(day => {
+      const lineup = scrims[day].lineup;
+      const complete = ROLES.every(r => lineup[r] != null);
+      if (complete) {
+        const pid = lineup[role];
+        if (!pid) return '';
+        const score = playerProfiles[pid]?.[role] || 0;
+        return `${playerName(pid)} (${score})`;
+      }
+      const pid = scrims[day].available[ri];
+      return pid ? playerName(pid) : '';
+    })
+  );
+
+  const subCells = [];
+  for (let s = 0; s < maxSubs; s++) {
+    subCells.push(DAYS.map(day => {
+      const sub = scrims[day].substitutes[s];
+      return sub ? playerName(sub) : '';
+    }));
+  }
 
   const colWidths = DAYS.map((_, i) => {
     let w = Math.max(headers[i].length, counts[i].length);
-    if (scores) w = Math.max(w, scores[i].length);
-    for (const cell of columns[i]) {
-      w = Math.max(w, cell.length);
-    }
+    if (anyComplete) w = Math.max(w, lineupScores[i].length);
+    for (const rr of roleCells) w = Math.max(w, rr[i].length);
+    for (const sr of subCells) w = Math.max(w, sr[i].length);
     return w;
   });
 
-  const padL = (s, w) => s.padStart(w);
-  const padR = (s, w) => s.padEnd(w);
-  const line = (w) => '\u2500'.repeat(w);
+  const labelW = 9;
+  const pL = (s, w) => s.padStart(w);
+  const pR = (s, w) => s.padEnd(w);
+  const hl = (w) => '\u2500'.repeat(w);
+
+  const makeRow = (label, cells, right = false) => {
+    const pad = right ? pL : pR;
+    return pR(label, labelW) + ' \u2502 ' + cells.map((c, i) => pad(c, colWidths[i])).join(' \u2502 ') + '\n';
+  };
+
+  const sep = hl(labelW) + '\u2500\u253c\u2500' + colWidths.map(w => hl(w)).join('\u2500\u253c\u2500') + '\n';
 
   let text = '## DISPO — SCRIM\n\n```\n';
-  text += '   ' + headers.map((h, i) => padL(h, colWidths[i])).join(' \u2502 ') + '\n';
-  text += '   ' + colWidths.map(line).join('\u2500\u2502\u2500') + '\n';
-  text += '   ' + counts.map((c, i) => padL(c, colWidths[i])).join(' \u2502 ') + '\n';
+
+  text += ' '.repeat(labelW) + ' \u2502 ' + headers.map((h, i) => pL(h, colWidths[i])).join(' \u2502 ') + '\n';
+  text += sep;
+  text += makeRow('players', counts, true);
+  text += sep;
+
+  for (let ri = 0; ri < ROLES.length; ri++) {
+    text += makeRow(ROLES[ri], roleCells[ri]);
+  }
+
+  if (hasAnySub) {
+    text += ' '.repeat(labelW) + ' \u2502 ' + colWidths.map(() => '').join(' \u2502 ') + '\n';
+    for (let s = 0; s < maxSubs; s++) {
+      text += makeRow('sub', subCells[s]);
+    }
+  }
+
+  text += sep;
 
   if (anyComplete) {
-    text += '   ' + scores.map((s, i) => padL(s, colWidths[i])).join(' \u2502 ') + '\n';
+    text += makeRow('lineup', lineupScores, true);
+  } else {
+    text += makeRow('lineup', DAYS.map(() => ''));
   }
 
-  text += '   ' + colWidths.map(line).join('\u2500\u253c\u2500') + '\n';
-
-  for (let r = 0; r < maxRows; r++) {
-    const row = DAYS.map((_, i) => padR(columns[i][r] || '', colWidths[i]));
-    text += '   ' + row.join(' \u2502 ') + '\n';
-  }
+  text += makeRow('multiopgg', DAYS.map(() => ''));
 
   text += '```';
 
