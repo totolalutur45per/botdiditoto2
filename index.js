@@ -214,9 +214,13 @@ function dayDate(day) {
 }
 
 function buildInviteContent() {
+  const jsDay = new Date().getDay();
+  const todayIdx = (jsDay + 6) % 7;
+  const ordered = [...DAYS.slice(todayIdx), ...DAYS.slice(0, todayIdx)];
+
   let text = '## DISPO — SCRIM\n';
 
-  for (const day of DAYS) {
+  for (const day of ordered) {
     const count = scrims[day].available.length;
     const lineup = scrims[day].lineup;
     const complete = ROLES.every(r => lineup[r] != null);
