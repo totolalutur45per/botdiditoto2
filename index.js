@@ -31,15 +31,14 @@ const ROLES = ['TOP', 'JGL', 'MID', 'ADC', 'SUPP'];
 const INVITE_CHANNEL = 'invitation-scrim';
 const STATE_FILE = process.env.STATE_FILE || './scrims-state.json';
 const TIMEZONE = 'Europe/Paris';
-const STATE_VERSION = 4;
+const STATE_VERSION = 3;
 
 const scrims = {};
 for (const day of DAYS) {
   scrims[day] = {
     available: [],
     lineup: { TOP: null, JGL: null, MID: null, ADC: null, SUPP: null },
-    substitutes: [],
-    locked: false
+    substitutes: []
   };
 }
 
@@ -284,31 +283,42 @@ function buildInviteContent() {
   return text;
 }
 
+function isDayLocked(day) {
+  const jsDay = new Date().getDay();
+  const today = DAYS[(jsDay + 6) % 7];
+  const todayIdx = DAYS.indexOf(today);
+  const targetIdx = DAYS.indexOf(day);
+
+  const lineupComplete = ROLES.every(r => scrims[day].lineup[r] != null);
+  if (!lineupComplete) return false;
+
+  if (targetIdx < todayIdx) return true;
+  if (targetIdx > todayIdx) return false;
+
+  const now = new Date();
+  const time = now.toLocaleString('fr-FR', { timeZone: TIMEZONE, hour: '2-digit', minute: '2-digit', hour12: false });
+  const [h, m] = time.split(':').map(Number);
+  return h > 5 || (h === 5 && m >= 30);
+}
+
 function buildInviteButtons() {
   const makeRow = (days) => {
     const row = new ActionRowBuilder();
     for (const day of days) {
       const count = scrims[day].available.length;
-      const complete = scrims[day].locked && ROLES.every(r => scrims[day].lineup[r] != null);
+      const locked = isDayLocked(day);
       row.addComponents(
         new ButtonBuilder()
           .setCustomId(`DISPO:${day}`)
-          .setLabel(complete ? `🔒 ${day.slice(0, 3).toUpperCase()} (${count})` : `${day.slice(0, 3).toUpperCase()} (${count})`)
-          .setStyle(complete ? ButtonStyle.Secondary : ButtonStyle.Primary)
-          .setDisabled(complete)
+          .setLabel(locked ? `🔒 ${day.slice(0, 3).toUpperCase()} (${count})` : `${day.slice(0, 3).toUpperCase()} (${count})`)
+          .setStyle(locked ? ButtonStyle.Secondary : ButtonStyle.Primary)
+          .setDisabled(locked)
       );
     }
     return row;
   };
 
   return [makeRow(DAYS.slice(0, 5)), makeRow(DAYS.slice(5))];
-}
-
-function isPastLockTime() {
-  const now = new Date();
-  const time = now.toLocaleString('fr-FR', { timeZone: TIMEZONE, hour: '2-digit', minute: '2-digit', hour12: false });
-  const [h, m] = time.split(':').map(Number);
-  return h > 5 || (h === 5 && m >= 30);
 }
 
 async function updateInviteTable(guild) {
@@ -384,8 +394,7 @@ async function fullReset(guild) {
     scrims[day] = {
       available: [],
       lineup: { TOP: null, JGL: null, MID: null, ADC: null, SUPP: null },
-      substitutes: [],
-      locked: false
+      substitutes: []
     };
   }
   await saveState();
@@ -553,21 +562,29 @@ async function handleModal(interaction) {
   const parts = customId.split(':');
   const autoDay = parts[2];
 
+  let autoRegistered = false;
+  let dayLocked = false;
+
   if (autoDay && DAYS.includes(autoDay) && guild) {
     const lock = locks[autoDay];
     await lock.acquire();
 
     try {
       if (!scrims[autoDay].available.includes(userId)) {
-        scrims[autoDay].available.push(userId);
+        if (isDayLocked(autoDay)) {
+          dayLocked = true;
+        } else {
+          scrims[autoDay].available.push(userId);
+          autoRegistered = true;
 
-        const { lineup, substitutes } = calculateBestLineup(autoDay);
-        scrims[autoDay].lineup = lineup || { TOP: null, JGL: null, MID: null, ADC: null, SUPP: null };
-        scrims[autoDay].substitutes = substitutes;
+          const { lineup, substitutes } = calculateBestLineup(autoDay);
+          scrims[autoDay].lineup = lineup || { TOP: null, JGL: null, MID: null, ADC: null, SUPP: null };
+          scrims[autoDay].substitutes = substitutes;
 
-        await saveState();
-        await updateInviteTable(guild);
-        await tryAutoConfirm(guild, autoDay);
+          await saveState();
+          await tryPostConfirmation(guild, autoDay);
+          await updateInviteTable(guild);
+        }
       }
     } catch (err) {
       console.error('Erreur auto-register:', err.message);
@@ -576,8 +593,12 @@ async function handleModal(interaction) {
     }
   }
 
+  let extra = '';
+  if (autoRegistered) extra = `\n📝 Inscrit automatiquement pour **${autoDay.toUpperCase()}**`;
+  else if (dayLocked) extra = `\n⚠️ Inscriptions fermées pour **${autoDay.toUpperCase()}**`;
+
   await interaction.reply({
-    content: `✅ Préférences mises à jour!\n${ROLES.map(r => `${r}: ${playerProfiles[userId][r]}`).join(' | ')}${autoDay ? `\n📝 Inscrit automatiquement pour **${autoDay.toUpperCase()}**` : ''}`,
+    content: `✅ Préférences mises à jour!\n${ROLES.map(r => `${r}: ${playerProfiles[userId][r]}`).join(' | ')}${extra}`,
     ephemeral: true
   });
 }
@@ -603,7 +624,7 @@ async function handleButton(interaction) {
   await lock.acquire();
 
   try {
-    if (scrims[day].locked) {
+    if (isDayLocked(day)) {
       await interaction.reply({ content: `🔒 Inscriptions fermées pour **${day.toUpperCase()}**.`, ephemeral: true });
       return;
     }
@@ -621,8 +642,8 @@ async function handleButton(interaction) {
     scrims[day].substitutes = substitutes;
 
     await saveState();
+    await tryPostConfirmation(interaction.guild, day);
     await updateInviteTable(interaction.guild);
-    await tryAutoConfirm(interaction.guild, day);
     await interaction.deferUpdate();
   } catch (err) {
     console.error('Erreur interaction bouton:', err.message);
@@ -634,47 +655,29 @@ async function handleButton(interaction) {
   }
 }
 
-async function tryAutoConfirm(guild, day) {
+async function tryPostConfirmation(guild, day) {
   const s = scrims[day];
-  if (s.locked || s.available.length < 5) return;
+  if (s.available.length < 5) return;
+  if (!isDayLocked(day)) return;
 
-  const jsDay = new Date().getDay();
-  const today = DAYS[(jsDay + 6) % 7];
-  if (day !== today) return;
-  if (!isPastLockTime()) return;
-
-  s.locked = true;
-  const { lineup, substitutes } = calculateBestLineup(day);
-  s.lineup = lineup || { TOP: null, JGL: null, MID: null, ADC: null, SUPP: null };
-  s.substitutes = substitutes;
   await saveState();
   await updateInviteTable(guild);
   await confirmScrim(guild, day);
 }
 
-async function autoLockAndConfirm() {
-  const jsDay = new Date().getDay();
-  const day = DAYS[(jsDay + 6) % 7];
-  const s = scrims[day];
-  if (!s || s.locked) return;
-
-  if (s.available.length >= 5) {
-    s.locked = true;
-    const { lineup, substitutes } = calculateBestLineup(day);
-    s.lineup = lineup || { TOP: null, JGL: null, MID: null, ADC: null, SUPP: null };
-    s.substitutes = substitutes;
-    await saveState();
-
-    for (const guild of client.guilds.cache.values()) {
-      await updateInviteTable(guild);
-      await confirmScrim(guild, day);
-    }
-  }
-}
-
 cron.schedule('30 5 * * *', async () => {
   console.log('Vérification auto des scrims (05:30)');
-  await autoLockAndConfirm();
+  const jsDay = new Date().getDay();
+  const day = DAYS[(jsDay + 6) % 7];
+  if (!scrims[day] || scrims[day].available.length < 5) return;
+
+  const { lineup, substitutes } = calculateBestLineup(day);
+  scrims[day].lineup = lineup || { TOP: null, JGL: null, MID: null, ADC: null, SUPP: null };
+  scrims[day].substitutes = substitutes;
+
+  for (const guild of client.guilds.cache.values()) {
+    await tryPostConfirmation(guild, day);
+  }
 }, { timezone: TIMEZONE });
 
 cron.schedule('0 0 * * 1', async () => {
