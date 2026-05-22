@@ -34,7 +34,6 @@ const STATE_FILE = './scrims-state.json';
 const TIMEZONE = 'Europe/Paris';
 const STATE_VERSION = 3;
 
-// État global
 const scrims = {};
 for (const day of DAYS) {
   scrims[day] = {
@@ -46,9 +45,7 @@ for (const day of DAYS) {
 
 let playerProfiles = {};
 let displayNames = {};
-let stateLoadedFromFile = false;
 
-// --- Mutex per scrim day ---
 class Lock {
   constructor() {
     this._queue = [];
@@ -75,7 +72,6 @@ class Lock {
 const locks = {};
 for (const day of DAYS) locks[day] = new Lock();
 
-// --- State persistence ---
 async function loadState() {
   try {
     const raw = await fs.readFile(STATE_FILE, 'utf8');
@@ -90,7 +86,6 @@ async function loadState() {
     }
 
     console.log('État chargé depuis le fichier.');
-    stateLoadedFromFile = true;
   } catch (err) {
     if (err.code !== 'ENOENT') {
       console.error('Erreur chargement état:', err.message);
@@ -109,7 +104,6 @@ async function saveState() {
   }
 }
 
-// --- Helpers ---
 function playerName(userId) {
   return displayNames[userId] || `<@${userId}>`;
 }
@@ -118,7 +112,6 @@ function hasProfile(userId) {
   return playerProfiles[userId] != null;
 }
 
-// --- Scoring & Lineup Calculation ---
 function calculateBestLineup(day) {
   const available = scrims[day].available;
 
@@ -211,7 +204,6 @@ function assignRolesToCombo(combo) {
   return lineup;
 }
 
-// --- Message builders ---
 function buildInviteMessage(day) {
   const available = scrims[day].available.length;
   const lineup = scrims[day].lineup;
@@ -268,25 +260,6 @@ function buildRecapMessage() {
   return text;
 }
 
-function buildDayButtons() {
-  const rows = [];
-  const dayButtons = DAYS.map(day => {
-    const available = scrims[day].available.length;
-    return new ButtonBuilder()
-      .setCustomId(`DISPO:${day}`)
-      .setLabel(`${day.toUpperCase()} (${available}/5)`)
-      .setStyle(ButtonStyle.Primary);
-  });
-
-  for (let i = 0; i < dayButtons.length; i += 3) {
-    const row = new ActionRowBuilder().addComponents(dayButtons.slice(i, i + 3));
-    rows.push(row);
-  }
-
-  return rows;
-}
-
-// --- Channel helpers ---
 async function getOrCreateChannel(guild, name) {
   let channel = guild.channels.cache.find(c => c.name === name);
   if (!channel) {
@@ -301,7 +274,6 @@ async function getOrCreateChannel(guild, name) {
   return channel;
 }
 
-// --- Recap update ---
 async function updateRecap(guild) {
   const recapChannel = guild.channels.cache.find(c => c.name === RECAP_CHANNEL);
   if (!recapChannel) return;
@@ -316,12 +288,11 @@ async function updateRecap(guild) {
   }
 }
 
-// --- Sync all messages ---
 async function syncGuildChannels(guild) {
   const inviteChannel = guild.channels.cache.find(c => c.name === INVITE_CHANNEL);
   if (!inviteChannel) return;
 
-  const msgs = await inviteChannel.messages.fetch({ limit: 50 });
+  const msgs = await inviteChannel.messages.fetch({ limit: 100 });
   const botMsgs = msgs.filter(m => m.author.id === client.user.id);
 
   for (const msg of botMsgs.values()) {
@@ -332,7 +303,18 @@ async function syncGuildChannels(guild) {
     if (!DAYS.includes(day)) continue;
 
     try {
-      await msg.edit({ content: buildInviteMessage(day), components: buildDayButtons() });
+      const available = scrims[day].available.length;
+      const button = new ButtonBuilder()
+        .setCustomId(`DISPO:${day}`)
+        .setLabel(`DISPO (${available}/5)`)
+        .setStyle(ButtonStyle.Primary);
+      
+      const row = new ActionRowBuilder().addComponents(button);
+      
+      await msg.edit({ 
+        content: buildInviteMessage(day), 
+        components: [row] 
+      });
     } catch (err) {
       console.error(`Erreur sync message ${day}:`, err.message);
     }
@@ -341,7 +323,6 @@ async function syncGuildChannels(guild) {
   await updateRecap(guild);
 }
 
-// --- Notifications ---
 async function notifyLineupComplete(guild, day) {
   const recapChannel = guild.channels.cache.find(c => c.name === RECAP_CHANNEL);
   if (!recapChannel) return;
@@ -353,7 +334,6 @@ async function notifyLineupComplete(guild, day) {
   );
 }
 
-// --- Full reset ---
 async function fullReset(guild) {
   for (const day of DAYS) {
     scrims[day] = {
@@ -370,10 +350,19 @@ async function fullReset(guild) {
     await msg.delete();
   }
 
-  await inviteChannel.send({
-    content: `# 📅 SÉLECTIONNEZ VOTRE DISPONIBILITÉ\n\nCliquez sur un jour pour vous inscrire ou vous désinscrire.`,
-    components: buildDayButtons()
-  });
+  for (const day of DAYS) {
+    const button = new ButtonBuilder()
+      .setCustomId(`DISPO:${day}`)
+      .setLabel(`DISPO (0/5)`)
+      .setStyle(ButtonStyle.Primary);
+    
+    const row = new ActionRowBuilder().addComponents(button);
+    
+    await inviteChannel.send({
+      content: `## ${day.toUpperCase()} — SCRIM\n**Inscrits:** 0/5`,
+      components: [row]
+    });
+  }
 
   const recapChannel = await getOrCreateChannel(guild, RECAP_CHANNEL);
   const recapMsgs = await recapChannel.messages.fetch({ limit: 10 });
@@ -386,7 +375,40 @@ async function fullReset(guild) {
   }
 }
 
-// --- Client setup ---
+function showPrefModal(userId) {
+  const modal = new ModalBuilder()
+    .setCustomId(`PREF_MODAL:${userId}`)
+    .setTitle('Préférences de rôles');
+
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId('PREF_INFO')
+        .setLabel('Notez vos rôles de 0 à 3')
+        .setStyle(TextInputStyle.Paragraph)
+        .setValue('0 = ne joue pas le rôle\n3 = rôle préféré')
+        .setRequired(false)
+        .setMaxLength(100)
+    )
+  );
+
+  for (const role of ROLES) {
+    const current = playerProfiles[userId]?.[role] || 1;
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId(`PREF_${role}`)
+          .setLabel(`${role} (0-3)`)
+          .setStyle(TextInputStyle.Short)
+          .setValue(String(current))
+          .setRequired(true)
+      )
+    );
+  }
+
+  return modal;
+}
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -399,7 +421,6 @@ client.on('error', err => {
   console.error('Erreur client Discord:', err.message);
 });
 
-// --- Slash commands ---
 const commands = [
   new SlashCommandBuilder()
     .setName('setup')
@@ -409,7 +430,7 @@ const commands = [
     .setDescription('Reset toutes les inscriptions et renvoie les invitations'),
   new SlashCommandBuilder()
     .setName('setpref')
-    .setDescription('Définir vos préférences de rôles (1-3 points par rôle)')
+    .setDescription('Définir vos préférences de rôles (0-3 points par rôle)')
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(TOKEN);
@@ -423,7 +444,6 @@ const rest = new REST({ version: '10' }).setToken(TOKEN);
   }
 })();
 
-// --- Events ---
 client.once(Events.ClientReady, async () => {
   console.log(`Bot connecté : ${client.user.tag}`);
 
@@ -447,25 +467,7 @@ async function handleCommand(interaction) {
 
   if (commandName === 'setpref') {
     displayNames[user.id] = user.username;
-
-    const modal = new ModalBuilder()
-      .setCustomId(`PREF_MODAL:${user.id}`)
-      .setTitle('Préférences de rôles');
-
-    for (const role of ROLES) {
-      const current = playerProfiles[user.id]?.[role] || 1;
-      modal.addComponents(
-        new ActionRowBuilder().addComponents(
-          new TextInputBuilder()
-            .setCustomId(`PREF_${role}`)
-            .setLabel(`${role} (1-3)`)
-            .setStyle(TextInputStyle.Short)
-            .setValue(String(current))
-            .setRequired(true)
-        )
-      );
-    }
-
+    const modal = showPrefModal(user.id);
     await interaction.showModal(modal);
     return;
   }
@@ -482,10 +484,20 @@ async function handleCommand(interaction) {
     const inviteChannel = await getOrCreateChannel(guild, INVITE_CHANNEL);
     const recapChannel = await getOrCreateChannel(guild, RECAP_CHANNEL);
 
-    await inviteChannel.send({
-      content: `# 📅 SÉLECTIONNEZ VOTRE DISPONIBILITÉ\n\nCliquez sur un jour pour vous inscrire ou vous désinscrire.`,
-      components: buildDayButtons()
-    });
+    for (const day of DAYS) {
+      const button = new ButtonBuilder()
+        .setCustomId(`DISPO:${day}`)
+        .setLabel(`DISPO (0/5)`)
+        .setStyle(ButtonStyle.Primary);
+      
+      const row = new ActionRowBuilder().addComponents(button);
+      
+      await inviteChannel.send({
+        content: `## ${day.toUpperCase()} — SCRIM\n**Inscrits:** 0/5`,
+        components: [row]
+      });
+    }
+
     await recapChannel.send({ content: buildRecapMessage() });
 
     await interaction.editReply(`Salons <#${inviteChannel.id}> et <#${recapChannel.id}> prêts !`);
@@ -523,7 +535,7 @@ async function handleModal(interaction) {
     const value = interaction.fields.getTextInputValue(`PREF_${role}`);
     const score = parseInt(value);
 
-    if (isNaN(score) || score < 1 || score > 3) {
+    if (isNaN(score) || score < 0 || score > 3) {
       valid = false;
       break;
     }
@@ -533,7 +545,7 @@ async function handleModal(interaction) {
 
   if (!valid) {
     return interaction.reply({
-      content: 'Erreur: Chaque rôle doit avoir une valeur entre 1 et 3.',
+      content: 'Erreur: Chaque rôle doit avoir une valeur entre 0 et 3.',
       ephemeral: true
     });
   }
@@ -559,10 +571,9 @@ async function handleButton(interaction) {
   displayNames[userId] = interaction.user.username;
 
   if (!hasProfile(userId)) {
-    return interaction.reply({
-      content: '❌ Vous devez d\'abord définir vos préférences avec `/setpref`',
-      ephemeral: true
-    });
+    const modal = showPrefModal(userId);
+    await interaction.showModal(modal);
+    return;
   }
 
   const lock = locks[day];
@@ -586,18 +597,35 @@ async function handleButton(interaction) {
 
     const inviteChannel = interaction.guild.channels.cache.find(c => c.name === INVITE_CHANNEL);
     if (inviteChannel) {
-      const msgs = await inviteChannel.messages.fetch({ limit: 50 });
-      const mainMsg = msgs.find(m => m.author.id === client.user.id && m.content.includes('SÉLECTIONNEZ'));
-      if (mainMsg) {
-        await mainMsg.edit({ components: buildDayButtons() });
+      const msgs = await inviteChannel.messages.fetch({ limit: 100 });
+      for (const msg of msgs.values()) {
+        const lines = msg.content.split('\n');
+        const headerMatch = lines[0]?.match(/^## (\S+) — SCRIM$/);
+        if (!headerMatch) continue;
+        const msgDay = headerMatch[1].toLowerCase();
+        if (msgDay !== day) continue;
+
+        const available = scrims[day].available.length;
+        const button = new ButtonBuilder()
+          .setCustomId(`DISPO:${day}`)
+          .setLabel(`DISPO (${available}/5)`)
+          .setStyle(ButtonStyle.Primary);
+        
+        const row = new ActionRowBuilder().addComponents(button);
+        
+        try {
+          await msg.edit({ 
+            content: buildInviteMessage(day), 
+            components: [row] 
+          });
+        } catch (err) {
+          console.error(`Erreur update message ${day}:`, err.message);
+        }
+        break;
       }
     }
 
-    await interaction.update({
-      content: buildInviteMessage(day),
-      components: []
-    });
-
+    await interaction.deferUpdate();
     await updateRecap(interaction.guild);
 
     const isNowComplete = ROLES.every(role => scrims[day].lineup[role] != null);
@@ -614,7 +642,6 @@ async function handleButton(interaction) {
   }
 }
 
-// --- Cron: weekly reset every Monday at midnight ---
 cron.schedule('0 0 * * 1', async () => {
   console.log('Reset automatique de la semaine');
   for (const guild of client.guilds.cache.values()) {
@@ -622,7 +649,6 @@ cron.schedule('0 0 * * 1', async () => {
   }
 }, { timezone: TIMEZONE });
 
-// --- Graceful shutdown ---
 async function shutdown() {
   console.log('Arrêt en cours...');
   await saveState();
@@ -633,7 +659,6 @@ async function shutdown() {
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
-// --- Start ---
 (async () => {
   await loadState();
   client.login(TOKEN);
