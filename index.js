@@ -206,24 +206,33 @@ function assignRolesToCombo(combo) {
 }
 
 function buildInviteEmbed() {
-  const fields = DAYS.map(day => {
-    const available = scrims[day].available;
-    const count = available.length;
-    const value = available.length > 0
-      ? available.map(id => playerName(id)).join('\n')
-      : '—';
+  const header = DAYS.map(d => {
+    const count = scrims[d].available.length;
+    return `**${d.slice(0, 3).toUpperCase()}** ${count}/5`;
+  }).join(' · ');
 
-    return {
-      name: `${day.slice(0, 3).toUpperCase()} ${count}/5`,
-      value,
-      inline: true
-    };
-  });
+  const maxPlayers = Math.max(...DAYS.map(d => scrims[d].available.length), 0);
+
+  let body;
+  if (maxPlayers === 0) {
+    body = 'Aucun inscrit';
+  } else {
+    const playerDays = {};
+    for (const day of DAYS) {
+      for (const pid of scrims[day].available) {
+        if (!playerDays[pid]) playerDays[pid] = [];
+        playerDays[pid].push(day.slice(0, 3).toUpperCase());
+      }
+    }
+    body = Object.entries(playerDays)
+      .map(([pid, days]) => `${playerName(pid)} → ${days.join(', ')}`)
+      .join('\n');
+  }
 
   return new EmbedBuilder()
     .setTitle('DISPO — SCRIM')
     .setColor(0x5865F2)
-    .addFields(fields);
+    .setDescription(`${header}\n\n${body}`);
 }
 
 function buildInviteButtons() {
