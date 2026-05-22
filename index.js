@@ -203,8 +203,18 @@ function assignRolesToCombo(combo) {
   return lineup;
 }
 
+function dayDate(day) {
+  const now = new Date();
+  const jsToday = now.getDay();
+  const todayIdx = DAYS.indexOf(DAYS[(jsToday + 6) % 7]);
+  const diff = (7 + DAYS.indexOf(day) - todayIdx) % 7;
+  const d = new Date(now);
+  d.setDate(now.getDate() + diff);
+  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
 function buildInviteContent() {
-  const headers = DAYS.map(d => d.slice(0, 3).toUpperCase());
+  const headers = DAYS.map(d => `${d.slice(0, 3).toUpperCase()} ${dayDate(d)}`);
   const counts = DAYS.map(d => String(scrims[d].available.length));
 
   const anyComplete = DAYS.some(d =>
