@@ -12,7 +12,8 @@ const {
   ButtonStyle,
   ModalBuilder,
   TextInputBuilder,
-  TextInputStyle
+  TextInputStyle,
+  EmbedBuilder
 } = require('discord.js');
 
 const cron = require('node-cron');
@@ -105,7 +106,7 @@ async function saveState() {
 }
 
 function playerName(userId) {
-  return displayNames[userId] || `<@${userId}>`;
+  return `<@${userId}>`;
 }
 
 function hasProfile(userId) {
@@ -204,32 +205,25 @@ function assignRolesToCombo(combo) {
   return lineup;
 }
 
-function buildInviteTable() {
-  let text = '## DISPO — SCRIM\n\n';
+function buildInviteEmbed() {
+  const fields = DAYS.map(day => {
+    const available = scrims[day].available;
+    const count = available.length;
+    const value = available.length > 0
+      ? available.map(id => playerName(id)).join('\n')
+      : '—';
 
-  const headers = DAYS.map(day => {
-    const count = scrims[day].available.length;
-    return `${day.toUpperCase()} ${count}/5`;
+    return {
+      name: `${day.slice(0, 3).toUpperCase()} ${count}/5`,
+      value,
+      inline: true
+    };
   });
 
-  text += '| ' + headers.join(' | ') + ' |\n';
-  text += '| ' + headers.map(() => '---').join(' | ') + ' |\n';
-
-  const maxPlayers = Math.max(...DAYS.map(day => scrims[day].available.length), 0);
-
-  if (maxPlayers === 0) {
-    text += '| ' + DAYS.map(() => '—').join(' | ') + ' |\n';
-  } else {
-    for (let i = 0; i < maxPlayers; i++) {
-      const row = DAYS.map(day => {
-        const player = scrims[day].available[i];
-        return player ? playerName(player) : '—';
-      });
-      text += '| ' + row.join(' | ') + ' |\n';
-    }
-  }
-
-  return text;
+  return new EmbedBuilder()
+    .setTitle('DISPO — SCRIM')
+    .setColor(0x5865F2)
+    .addFields(fields);
 }
 
 function buildInviteButtons() {
@@ -267,10 +261,12 @@ async function updateInviteTable(guild) {
   const msgs = await inviteChannel.messages.fetch({ limit: 100 });
   const botMsg = msgs.find(m => m.author.id === client.user.id);
 
+  const options = { embeds: [buildInviteEmbed()], components: buildInviteButtons() };
+
   if (botMsg) {
-    await botMsg.edit({ content: buildInviteTable(), components: buildInviteButtons() });
+    await botMsg.edit(options);
   } else {
-    await inviteChannel.send({ content: buildInviteTable(), components: buildInviteButtons() });
+    await inviteChannel.send(options);
   }
 }
 
@@ -343,7 +339,7 @@ async function syncGuildChannels(guild) {
     try { await msg.delete(); } catch (e) {}
   }
 
-  await inviteChannel.send({ content: buildInviteTable(), components: buildInviteButtons() });
+  await inviteChannel.send({ embeds: [buildInviteEmbed()], components: buildInviteButtons() });
   await updateRecap(guild);
 }
 
@@ -374,7 +370,7 @@ async function fullReset(guild) {
     await msg.delete();
   }
 
-  await inviteChannel.send({ content: buildInviteTable(), components: buildInviteButtons() });
+  await inviteChannel.send({ embeds: [buildInviteEmbed()], components: buildInviteButtons() });
 
   const recapChannel = await getOrCreateChannel(guild, RECAP_CHANNEL);
   const recapMsgs = await recapChannel.messages.fetch({ limit: 10 });
@@ -486,7 +482,7 @@ async function handleCommand(interaction) {
     const inviteChannel = await getOrCreateChannel(guild, INVITE_CHANNEL);
     const recapChannel = await getOrCreateChannel(guild, RECAP_CHANNEL);
 
-    await inviteChannel.send({ content: buildInviteTable(), components: buildInviteButtons() });
+    await inviteChannel.send({ embeds: [buildInviteEmbed()], components: buildInviteButtons() });
     await recapChannel.send({ content: buildRecapMessage() });
 
     await interaction.editReply(`Salons <#${inviteChannel.id}> et <#${recapChannel.id}> prêts !`);
