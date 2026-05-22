@@ -160,7 +160,7 @@ function calculateComboScore(combo) {
   for (const userId of combo) {
     const prefs = playerProfiles[userId] || {};
     let bestRole = null;
-    let bestScore = 0;
+    let bestScore = -1;
 
     for (const role of ROLES) {
       if (!used.has(role) && (prefs[role] || 0) > bestScore) {
@@ -185,7 +185,7 @@ function assignRolesToCombo(combo) {
   for (const userId of combo) {
     const prefs = playerProfiles[userId] || {};
     let bestRole = null;
-    let bestScore = 0;
+    let bestScore = -1;
 
     for (const role of ROLES) {
       if (!used.has(role) && (prefs[role] || 0) > bestScore) {
