@@ -375,9 +375,10 @@ async function fullReset(guild) {
   }
 }
 
-function showPrefModal(userId) {
+function showPrefModal(userId, day = null) {
+  const customId = day ? `PREF_MODAL:${userId}:${day}` : `PREF_MODAL:${userId}`;
   const modal = new ModalBuilder()
-    .setCustomId(`PREF_MODAL:${userId}`)
+    .setCustomId(customId)
     .setTitle('Préférences de rôles (0-3)');
 
   for (const role of ROLES) {
@@ -542,8 +543,70 @@ async function handleModal(interaction) {
   displayNames[userId] = user.username;
   await saveState();
 
+  const parts = customId.split(':');
+  const autoDay = parts[2];
+
+  if (autoDay && DAYS.includes(autoDay) && guild) {
+    const lock = locks[autoDay];
+    await lock.acquire();
+
+    try {
+      if (!scrims[autoDay].available.includes(userId)) {
+        const wasComplete = ROLES.every(role => scrims[autoDay].lineup[role] != null);
+        scrims[autoDay].available.push(userId);
+
+        const { lineup, substitutes } = calculateBestLineup(autoDay);
+        scrims[autoDay].lineup = lineup || { TOP: null, JGL: null, MID: null, ADC: null, SUPP: null };
+        scrims[autoDay].substitutes = substitutes;
+
+        await saveState();
+
+        const inviteChannel = guild.channels.cache.find(c => c.name === INVITE_CHANNEL);
+        if (inviteChannel) {
+          const msgs = await inviteChannel.messages.fetch({ limit: 100 });
+          for (const msg of msgs.values()) {
+            const lines = msg.content.split('\n');
+            const headerMatch = lines[0]?.match(/^## (\S+) — SCRIM$/);
+            if (!headerMatch) continue;
+            const msgDay = headerMatch[1].toLowerCase();
+            if (msgDay !== autoDay) continue;
+
+            const available = scrims[autoDay].available.length;
+            const button = new ButtonBuilder()
+              .setCustomId(`DISPO:${autoDay}`)
+              .setLabel(`DISPO (${available}/5)`)
+              .setStyle(ButtonStyle.Primary);
+
+            const row = new ActionRowBuilder().addComponents(button);
+
+            try {
+              await msg.edit({
+                content: buildInviteMessage(autoDay),
+                components: [row]
+              });
+            } catch (err) {
+              console.error(`Erreur update message ${autoDay}:`, err.message);
+            }
+            break;
+          }
+        }
+
+        await updateRecap(guild);
+
+        const isNowComplete = ROLES.every(role => scrims[autoDay].lineup[role] != null);
+        if (!wasComplete && isNowComplete) {
+          await notifyLineupComplete(guild, autoDay);
+        }
+      }
+    } catch (err) {
+      console.error('Erreur auto-register:', err.message);
+    } finally {
+      lock.release();
+    }
+  }
+
   await interaction.reply({
-    content: `✅ Préférences mises à jour!\n${ROLES.map(r => `${r}: ${playerProfiles[userId][r]}`).join(' | ')}`,
+    content: `✅ Préférences mises à jour!\n${ROLES.map(r => `${r}: ${playerProfiles[userId][r]}`).join(' | ')}${autoDay ? `\n📝 Inscrit automatiquement pour **${autoDay.toUpperCase()}**` : ''}`,
     ephemeral: true
   });
 }
@@ -560,7 +623,7 @@ async function handleButton(interaction) {
   displayNames[userId] = interaction.user.username;
 
   if (!hasProfile(userId)) {
-    const modal = showPrefModal(userId);
+    const modal = showPrefModal(userId, day);
     await interaction.showModal(modal);
     return;
   }
