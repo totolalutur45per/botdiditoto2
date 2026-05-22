@@ -283,19 +283,81 @@ function buildInviteButtons() {
   return [row1, row2];
 }
 
+function buildVerticalList() {
+  let nameW = 3;
+  for (const day of DAYS) {
+    for (const pid of scrims[day].available) {
+      nameW = Math.max(nameW, playerName(pid).length);
+    }
+  }
+
+  const bar = (n) => '\u2588'.repeat(n) + '\u2591'.repeat(3 - n);
+
+  let text = '## DETAILS — LINEUPS & PREFERENCES\n\n```\n';
+
+  for (const day of DAYS) {
+    const lineup = scrims[day].lineup;
+    const complete = ROLES.every(role => lineup[role] != null);
+    const count = scrims[day].available.length;
+    const status = complete ? 'OK' : count > 0 ? '..' : '--';
+
+    text += `${day.toUpperCase().padEnd(9)} ${count}/5 ${status}`;
+
+    if (complete) {
+      let total = 0;
+      for (const role of ROLES) {
+        const pid = lineup[role];
+        if (pid) total += playerProfiles[pid]?.[role] || 0;
+      }
+      text += `  lineup: ${total}/15`;
+    }
+
+    text += '\n';
+
+    if (complete) {
+      for (const role of ROLES) {
+        const pid = lineup[role];
+        if (!pid) continue;
+        const score = playerProfiles[pid]?.[role] || 0;
+        text += `  ${role.padEnd(4)} ${playerName(pid).padEnd(nameW)} [${score}] ${bar(score)}\n`;
+      }
+      for (const sub of scrims[day].substitutes) {
+        text += `  SUB  ${playerName(sub).padEnd(nameW)}\n`;
+      }
+    } else if (count > 0) {
+      for (const pid of scrims[day].available) {
+        text += `  ${playerName(pid)}\n`;
+      }
+    }
+
+    text += '\n';
+  }
+
+  text += '```';
+  return text;
+}
+
 async function updateInviteTable(guild) {
   const inviteChannel = guild.channels.cache.find(c => c.name === INVITE_CHANNEL);
   if (!inviteChannel) return;
 
   const msgs = await inviteChannel.messages.fetch({ limit: 100 });
-  const botMsg = msgs.find(m => m.author.id === client.user.id);
+  const botMsgs = [...msgs.filter(m => m.author.id === client.user.id).values()]
+    .sort((a, b) => a.createdTimestamp - b.createdTimestamp);
 
-  const options = { content: buildInviteContent(), components: buildInviteButtons() };
+  const tableOpts = { content: buildInviteContent(), components: buildInviteButtons() };
+  const listOpts = { content: buildVerticalList() };
 
-  if (botMsg) {
-    await botMsg.edit(options);
+  if (botMsgs[0]) {
+    await botMsgs[0].edit(tableOpts);
   } else {
-    await inviteChannel.send(options);
+    await inviteChannel.send(tableOpts);
+  }
+
+  if (botMsgs[1]) {
+    await botMsgs[1].edit(listOpts);
+  } else {
+    await inviteChannel.send(listOpts);
   }
 }
 
@@ -369,6 +431,7 @@ async function syncGuildChannels(guild) {
   }
 
   await inviteChannel.send({ content: buildInviteContent(), components: buildInviteButtons() });
+  await inviteChannel.send({ content: buildVerticalList() });
   await updateRecap(guild);
 }
 
@@ -400,6 +463,7 @@ async function fullReset(guild) {
   }
 
   await inviteChannel.send({ content: buildInviteContent(), components: buildInviteButtons() });
+  await inviteChannel.send({ content: buildVerticalList() });
 
   const recapChannel = await getOrCreateChannel(guild, RECAP_CHANNEL);
   const recapMsgs = await recapChannel.messages.fetch({ limit: 10 });
@@ -512,6 +576,7 @@ async function handleCommand(interaction) {
     const recapChannel = await getOrCreateChannel(guild, RECAP_CHANNEL);
 
     await inviteChannel.send({ content: buildInviteContent(), components: buildInviteButtons() });
+    await inviteChannel.send({ content: buildVerticalList() });
     await recapChannel.send({ content: buildRecapMessage() });
 
     await interaction.editReply(`Salons <#${inviteChannel.id}> et <#${recapChannel.id}> prêts !`);
