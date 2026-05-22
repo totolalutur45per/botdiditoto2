@@ -672,8 +672,28 @@ async function tryPostConfirmation(guild, day) {
   await confirmScrim(guild, day);
 }
 
+async function cleanupOldConfirmations(guild) {
+  const channel = guild.channels.cache.find(c => c.name === INVITE_CHANNEL);
+  if (!channel) return;
+
+  const msgs = await channel.messages.fetch({ limit: 50 });
+  const botMsgs = msgs.filter(m => m.author.id === client.user.id)
+    .sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+
+  if (botMsgs.length <= 1) return;
+
+  for (let i = 1; i < botMsgs.length; i++) {
+    try { await botMsgs[i].delete(); } catch (e) {}
+  }
+}
+
 cron.schedule('30 5 * * *', async () => {
   console.log('Vérification auto des scrims (05:30)');
+
+  for (const guild of client.guilds.cache.values()) {
+    await cleanupOldConfirmations(guild);
+  }
+
   const jsDay = new Date().getDay();
   const day = DAYS[(jsDay + 6) % 7];
   if (!scrims[day] || scrims[day].available.length < 5) return;
