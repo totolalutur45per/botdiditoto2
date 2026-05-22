@@ -496,19 +496,17 @@ const commands = [
 
 const rest = new REST({ version: '10' }).setToken(TOKEN);
 
-(async () => {
-  try {
-    await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-    console.log('Commandes slash enregistrées.');
-  } catch (error) {
-    console.error('Erreur enregistrement commandes:', error);
-  }
-})();
-
 client.once(Events.ClientReady, async () => {
   console.log(`Bot connecté : ${client.user.tag}`);
 
   for (const guild of client.guilds.cache.values()) {
+    try {
+      await rest.put(Routes.applicationGuildCommands(CLIENT_ID, guild.id), { body: commands });
+      console.log(`Commandes enregistrées sur ${guild.name}`);
+    } catch (error) {
+      console.error(`Erreur enregistrement commandes sur ${guild.name}:`, error);
+    }
+
     await syncGuildChannels(guild);
   }
 });
