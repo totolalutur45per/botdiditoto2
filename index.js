@@ -289,13 +289,13 @@ function buildInviteButtons() {
     const row = new ActionRowBuilder();
     for (const day of days) {
       const count = scrims[day].available.length;
-      const locked = scrims[day].locked;
+      const complete = scrims[day].locked && ROLES.every(r => scrims[day].lineup[r] != null);
       row.addComponents(
         new ButtonBuilder()
           .setCustomId(`DISPO:${day}`)
-          .setLabel(locked ? `🔒 ${day.slice(0, 3).toUpperCase()} (${count})` : `${day.slice(0, 3).toUpperCase()} (${count})`)
-          .setStyle(locked ? ButtonStyle.Secondary : ButtonStyle.Primary)
-          .setDisabled(locked)
+          .setLabel(complete ? `🔒 ${day.slice(0, 3).toUpperCase()} (${count})` : `${day.slice(0, 3).toUpperCase()} (${count})`)
+          .setStyle(complete ? ButtonStyle.Secondary : ButtonStyle.Primary)
+          .setDisabled(complete)
       );
     }
     return row;
