@@ -225,14 +225,15 @@ function buildInviteContent() {
     const complete = ROLES.every(r => scrims[d].lineup[r] != null);
     if (!complete) return '';
     let total = 0;
+    const parts = [];
     for (const role of ROLES) {
       const pid = scrims[d].lineup[role];
-      if (pid) total += playerProfiles[pid]?.[role] || 0;
+      const score = pid ? (playerProfiles[pid]?.[role] || 0) : 0;
+      total += score;
+      parts.push(String(score));
     }
-    return String(total);
+    return `${total} (${parts.join('+')})`;
   });
-
-  const ROLE_SHORT = { TOP: 'T', JGL: 'J', MID: 'M', ADC: 'A', SUPP: 'S' };
 
   const playerCells = ROLES.map((role, ri) =>
     DAYS.map(day => {
@@ -242,7 +243,7 @@ function buildInviteContent() {
         const pid = lineup[role];
         if (!pid) return '';
         const score = playerProfiles[pid]?.[role] || 0;
-        return `${playerName(pid)} ${ROLE_SHORT[role]}${score}`;
+        return `${playerName(pid)} (${role.toLowerCase()}) ${score}`;
       }
       const pid = scrims[day].available[ri];
       return pid ? playerName(pid) : '';
@@ -309,7 +310,7 @@ function buildInviteContent() {
   text += '```';
 
   if (anyComplete) {
-    text += '\n> T=TOP J=JGL M=MID A=ADC S=SUPP · number = role preference (max 3)';
+    text += '\n> Role preference score (0-3) shown next to assigned role · Lineup = sum of all scores';
   }
 
   return text;
