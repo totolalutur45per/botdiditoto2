@@ -208,6 +208,21 @@ function buildInviteContent() {
   const headers = DAYS.map(d => d.slice(0, 3).toUpperCase());
   const counts = DAYS.map(d => String(scrims[d].available.length));
 
+  const anyComplete = DAYS.some(d =>
+    ROLES.every(r => scrims[d].lineup[r] != null)
+  );
+
+  const scores = anyComplete ? DAYS.map(d => {
+    const complete = ROLES.every(r => scrims[d].lineup[r] != null);
+    if (!complete) return '';
+    let total = 0;
+    for (const role of ROLES) {
+      const pid = scrims[d].lineup[role];
+      if (pid) total += playerProfiles[pid]?.[role] || 0;
+    }
+    return String(total);
+  }) : null;
+
   const columns = DAYS.map(day => {
     const lineup = scrims[day].lineup;
     const complete = ROLES.every(role => lineup[role] != null);
@@ -216,7 +231,10 @@ function buildInviteContent() {
       const cells = [];
       for (const role of ROLES) {
         const pid = lineup[role];
-        if (pid) cells.push(`${playerName(pid)} (${role})`);
+        if (pid) {
+          const score = playerProfiles[pid]?.[role] || 0;
+          cells.push(`${playerName(pid)} (${role} ${score})`);
+        }
       }
       for (const sub of scrims[day].substitutes) {
         cells.push(`${playerName(sub)} (sub)`);
@@ -230,6 +248,7 @@ function buildInviteContent() {
 
   const colWidths = DAYS.map((_, i) => {
     let w = Math.max(headers[i].length, counts[i].length);
+    if (scores) w = Math.max(w, scores[i].length);
     for (const cell of columns[i]) {
       w = Math.max(w, cell.length);
     }
@@ -238,20 +257,30 @@ function buildInviteContent() {
 
   const padL = (s, w) => s.padStart(w);
   const padR = (s, w) => s.padEnd(w);
-  const bar = (w) => '─'.repeat(w);
+  const line = (w) => '\u2500'.repeat(w);
 
   let text = '## DISPO — SCRIM\n\n```\n';
-  text += '  ' + headers.map((h, i) => padL(h, colWidths[i])).join(' │ ') + '\n';
-  text += '  ' + colWidths.map(bar).join('─┼─') + '\n';
-  text += '  ' + counts.map((c, i) => padL(c, colWidths[i])).join(' │ ') + '\n';
-  text += '  ' + colWidths.map(bar).join('─┼─') + '\n';
+  text += '   ' + headers.map((h, i) => padL(h, colWidths[i])).join(' \u2502 ') + '\n';
+  text += '   ' + colWidths.map(line).join('\u2500\u2502\u2500') + '\n';
+  text += '   ' + counts.map((c, i) => padL(c, colWidths[i])).join(' \u2502 ') + '\n';
+
+  if (anyComplete) {
+    text += '   ' + scores.map((s, i) => padL(s, colWidths[i])).join(' \u2502 ') + '\n';
+  }
+
+  text += '   ' + colWidths.map(line).join('\u2500\u253c\u2500') + '\n';
 
   for (let r = 0; r < maxRows; r++) {
     const row = DAYS.map((_, i) => padR(columns[i][r] || '', colWidths[i]));
-    text += '  ' + row.join(' │ ') + '\n';
+    text += '   ' + row.join(' \u2502 ') + '\n';
   }
 
   text += '```';
+
+  if (anyComplete) {
+    text += '\n> Lineup score = sum of assigned role preferences (max 15)';
+  }
+
   return text;
 }
 
@@ -283,60 +312,6 @@ function buildInviteButtons() {
   return [row1, row2];
 }
 
-function buildVerticalList() {
-  let nameW = 3;
-  for (const day of DAYS) {
-    for (const pid of scrims[day].available) {
-      nameW = Math.max(nameW, playerName(pid).length);
-    }
-  }
-
-  const bar = (n) => '\u2588'.repeat(n) + '\u2591'.repeat(3 - n);
-
-  let text = '## DETAILS — LINEUPS & PREFERENCES\n\n```\n';
-
-  for (const day of DAYS) {
-    const lineup = scrims[day].lineup;
-    const complete = ROLES.every(role => lineup[role] != null);
-    const count = scrims[day].available.length;
-    const status = complete ? 'OK' : count > 0 ? '..' : '--';
-
-    text += `${day.toUpperCase().padEnd(9)} ${count}/5 ${status}`;
-
-    if (complete) {
-      let total = 0;
-      for (const role of ROLES) {
-        const pid = lineup[role];
-        if (pid) total += playerProfiles[pid]?.[role] || 0;
-      }
-      text += `  lineup: ${total}/15`;
-    }
-
-    text += '\n';
-
-    if (complete) {
-      for (const role of ROLES) {
-        const pid = lineup[role];
-        if (!pid) continue;
-        const score = playerProfiles[pid]?.[role] || 0;
-        text += `  ${role.padEnd(4)} ${playerName(pid).padEnd(nameW)} [${score}] ${bar(score)}\n`;
-      }
-      for (const sub of scrims[day].substitutes) {
-        text += `  SUB  ${playerName(sub).padEnd(nameW)}\n`;
-      }
-    } else if (count > 0) {
-      for (const pid of scrims[day].available) {
-        text += `  ${playerName(pid)}\n`;
-      }
-    }
-
-    text += '\n';
-  }
-
-  text += '```';
-  return text;
-}
-
 async function updateInviteTable(guild) {
   const inviteChannel = guild.channels.cache.find(c => c.name === INVITE_CHANNEL);
   if (!inviteChannel) return;
@@ -345,19 +320,16 @@ async function updateInviteTable(guild) {
   const botMsgs = [...msgs.filter(m => m.author.id === client.user.id).values()]
     .sort((a, b) => a.createdTimestamp - b.createdTimestamp);
 
-  const tableOpts = { content: buildInviteContent(), components: buildInviteButtons() };
-  const listOpts = { content: buildVerticalList() };
+  const opts = { content: buildInviteContent(), components: buildInviteButtons() };
 
   if (botMsgs[0]) {
-    await botMsgs[0].edit(tableOpts);
+    await botMsgs[0].edit(opts);
   } else {
-    await inviteChannel.send(tableOpts);
+    await inviteChannel.send(opts);
   }
 
-  if (botMsgs[1]) {
-    await botMsgs[1].edit(listOpts);
-  } else {
-    await inviteChannel.send(listOpts);
+  for (let i = 1; i < botMsgs.length; i++) {
+    try { await botMsgs[i].delete(); } catch (e) {}
   }
 }
 
@@ -431,7 +403,6 @@ async function syncGuildChannels(guild) {
   }
 
   await inviteChannel.send({ content: buildInviteContent(), components: buildInviteButtons() });
-  await inviteChannel.send({ content: buildVerticalList() });
   await updateRecap(guild);
 }
 
@@ -463,7 +434,6 @@ async function fullReset(guild) {
   }
 
   await inviteChannel.send({ content: buildInviteContent(), components: buildInviteButtons() });
-  await inviteChannel.send({ content: buildVerticalList() });
 
   const recapChannel = await getOrCreateChannel(guild, RECAP_CHANNEL);
   const recapMsgs = await recapChannel.messages.fetch({ limit: 10 });
@@ -576,7 +546,6 @@ async function handleCommand(interaction) {
     const recapChannel = await getOrCreateChannel(guild, RECAP_CHANNEL);
 
     await inviteChannel.send({ content: buildInviteContent(), components: buildInviteButtons() });
-    await inviteChannel.send({ content: buildVerticalList() });
     await recapChannel.send({ content: buildRecapMessage() });
 
     await interaction.editReply(`Salons <#${inviteChannel.id}> et <#${recapChannel.id}> prêts !`);
