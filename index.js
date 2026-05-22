@@ -205,10 +205,8 @@ function assignRolesToCombo(combo) {
 }
 
 function buildInviteContent() {
-  const headers = DAYS.map(d => {
-    const count = scrims[d].available.length;
-    return `${d.slice(0, 3).toUpperCase()} ${count}/5`;
-  });
+  const headers = DAYS.map(d => d.slice(0, 3).toUpperCase());
+  const counts = DAYS.map(d => String(scrims[d].available.length));
 
   const maxPlayers = Math.max(...DAYS.map(d => scrims[d].available.length), 0);
 
@@ -226,22 +224,25 @@ function buildInviteContent() {
 
   let colW = 0;
   for (let i = 0; i < DAYS.length; i++) {
-    colW = Math.max(colW, headers[i].length);
+    colW = Math.max(colW, headers[i].length, counts[i].length);
     for (const row of rows) {
       colW = Math.max(colW, row[i].length);
     }
   }
   colW = Math.max(colW, 8);
 
-  const pad = (s) => s.padEnd(colW);
-  const sep = '-'.repeat(colW);
+  const padL = (s, w) => s.padStart(w);
+  const padR = (s, w) => s.padEnd(w);
+  const bar = '─'.repeat(colW);
 
-  let text = '## DISPO — SCRIM\n\n```';
-  text += headers.map(pad).join(' | ') + '\n';
-  text += DAYS.map(() => sep).join('-+-') + '\n';
+  let text = '## DISPO — SCRIM\n\n```\n';
+  text += '  ' + headers.map(h => padL(h, colW)).join(' │ ') + '\n';
+  text += '  ' + DAYS.map(() => bar).join('─┼─') + '\n';
+  text += '  ' + counts.map(c => padL(c, colW)).join(' │ ') + '\n';
+  text += '  ' + DAYS.map(() => bar).join('─┼─') + '\n';
 
   for (const row of rows) {
-    text += row.map(pad).join(' | ') + '\n';
+    text += '  ' + row.map(c => padR(c, colW)).join(' │ ') + '\n';
   }
 
   text += '```';
@@ -256,7 +257,7 @@ function buildInviteButtons() {
     row1.addComponents(
       new ButtonBuilder()
         .setCustomId(`DISPO:${day}`)
-        .setLabel(`${day.slice(0, 3).toUpperCase()} (${count}/5)`)
+        .setLabel(`${day.slice(0, 3).toUpperCase()} (${count})`)
         .setStyle(ButtonStyle.Primary)
     );
   }
@@ -268,7 +269,7 @@ function buildInviteButtons() {
     row2.addComponents(
       new ButtonBuilder()
         .setCustomId(`DISPO:${day}`)
-        .setLabel(`${day.slice(0, 3).toUpperCase()} (${count}/5)`)
+        .setLabel(`${day.slice(0, 3).toUpperCase()} (${count})`)
         .setStyle(ButtonStyle.Primary)
     );
   }
