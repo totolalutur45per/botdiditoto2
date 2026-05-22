@@ -378,19 +378,7 @@ async function fullReset(guild) {
 function showPrefModal(userId) {
   const modal = new ModalBuilder()
     .setCustomId(`PREF_MODAL:${userId}`)
-    .setTitle('Préférences de rôles');
-
-  modal.addComponents(
-    new ActionRowBuilder().addComponents(
-      new TextInputBuilder()
-        .setCustomId('PREF_INFO')
-        .setLabel('Notez vos rôles de 0 à 3')
-        .setStyle(TextInputStyle.Paragraph)
-        .setValue('0 = ne joue pas le rôle\n3 = rôle préféré')
-        .setRequired(false)
-        .setMaxLength(100)
-    )
-  );
+    .setTitle('Préférences de rôles (0-3)');
 
   for (const role of ROLES) {
     const current = playerProfiles[userId]?.[role] || 1;
@@ -398,10 +386,11 @@ function showPrefModal(userId) {
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
           .setCustomId(`PREF_${role}`)
-          .setLabel(`${role} (0-3)`)
+          .setLabel(`${role} (0=ne joue pas, 3=préféré)`)
           .setStyle(TextInputStyle.Short)
           .setValue(String(current))
           .setRequired(true)
+          .setMaxLength(1)
       )
     );
   }
