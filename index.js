@@ -204,29 +204,74 @@ function assignRolesToCombo(combo) {
   return lineup;
 }
 
-function buildInviteMessage(day) {
-  const available = scrims[day].available.length;
-  const lineup = scrims[day].lineup;
-  const complete = ROLES.every(role => lineup[role] != null);
+function buildInviteTable() {
+  let text = '## DISPO — SCRIM\n\n';
 
-  let text = `## ${day.toUpperCase()} — SCRIM\n`;
-  text += `**Inscrits:** ${available}/5 ${complete ? '✅' : '⚠️'}\n\n`;
+  const headers = DAYS.map(day => {
+    const count = scrims[day].available.length;
+    return `${day.toUpperCase()} ${count}/5`;
+  });
 
-  if (complete) {
-    text += `**Lineup:**\n`;
-    for (const role of ROLES) {
-      text += `**${role}** : ${playerName(lineup[role])}\n`;
-    }
+  text += '| ' + headers.join(' | ') + ' |\n';
+  text += '| ' + headers.map(() => '---').join(' | ') + ' |\n';
 
-    const subs = scrims[day].substitutes;
-    if (subs.length > 0) {
-      text += `\n**Remplaçants:** ${subs.map(id => playerName(id)).join(', ')}\n`;
-    }
+  const maxPlayers = Math.max(...DAYS.map(day => scrims[day].available.length), 0);
+
+  if (maxPlayers === 0) {
+    text += '| ' + DAYS.map(() => '—').join(' | ') + ' |\n';
   } else {
-    text += `En attente de plus d'inscrits...\n`;
+    for (let i = 0; i < maxPlayers; i++) {
+      const row = DAYS.map(day => {
+        const player = scrims[day].available[i];
+        return player ? playerName(player) : '—';
+      });
+      text += '| ' + row.join(' | ') + ' |\n';
+    }
   }
 
   return text;
+}
+
+function buildInviteButtons() {
+  const row1 = new ActionRowBuilder();
+  for (let i = 0; i < 5; i++) {
+    const day = DAYS[i];
+    const count = scrims[day].available.length;
+    row1.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`DISPO:${day}`)
+        .setLabel(`${day.slice(0, 3).toUpperCase()} (${count}/5)`)
+        .setStyle(ButtonStyle.Primary)
+    );
+  }
+
+  const row2 = new ActionRowBuilder();
+  for (let i = 5; i < DAYS.length; i++) {
+    const day = DAYS[i];
+    const count = scrims[day].available.length;
+    row2.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`DISPO:${day}`)
+        .setLabel(`${day.slice(0, 3).toUpperCase()} (${count}/5)`)
+        .setStyle(ButtonStyle.Primary)
+    );
+  }
+
+  return [row1, row2];
+}
+
+async function updateInviteTable(guild) {
+  const inviteChannel = guild.channels.cache.find(c => c.name === INVITE_CHANNEL);
+  if (!inviteChannel) return;
+
+  const msgs = await inviteChannel.messages.fetch({ limit: 100 });
+  const botMsg = msgs.find(m => m.author.id === client.user.id);
+
+  if (botMsg) {
+    await botMsg.edit({ content: buildInviteTable(), components: buildInviteButtons() });
+  } else {
+    await inviteChannel.send({ content: buildInviteTable(), components: buildInviteButtons() });
+  }
 }
 
 function buildRecapMessage() {
@@ -294,32 +339,11 @@ async function syncGuildChannels(guild) {
 
   const msgs = await inviteChannel.messages.fetch({ limit: 100 });
   const botMsgs = msgs.filter(m => m.author.id === client.user.id);
-
   for (const msg of botMsgs.values()) {
-    const lines = msg.content.split('\n');
-    const headerMatch = lines[0]?.match(/^## (\S+) — SCRIM$/);
-    if (!headerMatch) continue;
-    const day = headerMatch[1].toLowerCase();
-    if (!DAYS.includes(day)) continue;
-
-    try {
-      const available = scrims[day].available.length;
-      const button = new ButtonBuilder()
-        .setCustomId(`DISPO:${day}`)
-        .setLabel(`DISPO (${available}/5)`)
-        .setStyle(ButtonStyle.Primary);
-      
-      const row = new ActionRowBuilder().addComponents(button);
-      
-      await msg.edit({ 
-        content: buildInviteMessage(day), 
-        components: [row] 
-      });
-    } catch (err) {
-      console.error(`Erreur sync message ${day}:`, err.message);
-    }
+    try { await msg.delete(); } catch (e) {}
   }
 
+  await inviteChannel.send({ content: buildInviteTable(), components: buildInviteButtons() });
   await updateRecap(guild);
 }
 
@@ -350,19 +374,7 @@ async function fullReset(guild) {
     await msg.delete();
   }
 
-  for (const day of DAYS) {
-    const button = new ButtonBuilder()
-      .setCustomId(`DISPO:${day}`)
-      .setLabel(`DISPO (0/5)`)
-      .setStyle(ButtonStyle.Primary);
-    
-    const row = new ActionRowBuilder().addComponents(button);
-    
-    await inviteChannel.send({
-      content: `## ${day.toUpperCase()} — SCRIM\n**Inscrits:** 0/5`,
-      components: [row]
-    });
-  }
+  await inviteChannel.send({ content: buildInviteTable(), components: buildInviteButtons() });
 
   const recapChannel = await getOrCreateChannel(guild, RECAP_CHANNEL);
   const recapMsgs = await recapChannel.messages.fetch({ limit: 10 });
@@ -474,20 +486,7 @@ async function handleCommand(interaction) {
     const inviteChannel = await getOrCreateChannel(guild, INVITE_CHANNEL);
     const recapChannel = await getOrCreateChannel(guild, RECAP_CHANNEL);
 
-    for (const day of DAYS) {
-      const button = new ButtonBuilder()
-        .setCustomId(`DISPO:${day}`)
-        .setLabel(`DISPO (0/5)`)
-        .setStyle(ButtonStyle.Primary);
-      
-      const row = new ActionRowBuilder().addComponents(button);
-      
-      await inviteChannel.send({
-        content: `## ${day.toUpperCase()} — SCRIM\n**Inscrits:** 0/5`,
-        components: [row]
-      });
-    }
-
+    await inviteChannel.send({ content: buildInviteTable(), components: buildInviteButtons() });
     await recapChannel.send({ content: buildRecapMessage() });
 
     await interaction.editReply(`Salons <#${inviteChannel.id}> et <#${recapChannel.id}> prêts !`);
@@ -560,36 +559,7 @@ async function handleModal(interaction) {
         scrims[autoDay].substitutes = substitutes;
 
         await saveState();
-
-        const inviteChannel = guild.channels.cache.find(c => c.name === INVITE_CHANNEL);
-        if (inviteChannel) {
-          const msgs = await inviteChannel.messages.fetch({ limit: 100 });
-          for (const msg of msgs.values()) {
-            const lines = msg.content.split('\n');
-            const headerMatch = lines[0]?.match(/^## (\S+) — SCRIM$/);
-            if (!headerMatch) continue;
-            const msgDay = headerMatch[1].toLowerCase();
-            if (msgDay !== autoDay) continue;
-
-            const available = scrims[autoDay].available.length;
-            const button = new ButtonBuilder()
-              .setCustomId(`DISPO:${autoDay}`)
-              .setLabel(`DISPO (${available}/5)`)
-              .setStyle(ButtonStyle.Primary);
-
-            const row = new ActionRowBuilder().addComponents(button);
-
-            try {
-              await msg.edit({
-                content: buildInviteMessage(autoDay),
-                components: [row]
-              });
-            } catch (err) {
-              console.error(`Erreur update message ${autoDay}:`, err.message);
-            }
-            break;
-          }
-        }
+        await updateInviteTable(guild);
 
         await updateRecap(guild);
 
@@ -647,36 +617,7 @@ async function handleButton(interaction) {
 
     await saveState();
 
-    const inviteChannel = interaction.guild.channels.cache.find(c => c.name === INVITE_CHANNEL);
-    if (inviteChannel) {
-      const msgs = await inviteChannel.messages.fetch({ limit: 100 });
-      for (const msg of msgs.values()) {
-        const lines = msg.content.split('\n');
-        const headerMatch = lines[0]?.match(/^## (\S+) — SCRIM$/);
-        if (!headerMatch) continue;
-        const msgDay = headerMatch[1].toLowerCase();
-        if (msgDay !== day) continue;
-
-        const available = scrims[day].available.length;
-        const button = new ButtonBuilder()
-          .setCustomId(`DISPO:${day}`)
-          .setLabel(`DISPO (${available}/5)`)
-          .setStyle(ButtonStyle.Primary);
-        
-        const row = new ActionRowBuilder().addComponents(button);
-        
-        try {
-          await msg.edit({ 
-            content: buildInviteMessage(day), 
-            components: [row] 
-          });
-        } catch (err) {
-          console.error(`Erreur update message ${day}:`, err.message);
-        }
-        break;
-      }
-    }
-
+    await updateInviteTable(interaction.guild);
     await interaction.deferUpdate();
     await updateRecap(interaction.guild);
 
