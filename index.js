@@ -232,7 +232,9 @@ function buildInviteContent() {
     return String(total);
   });
 
-  const roleCells = ROLES.map((role, ri) =>
+  const ROLE_SHORT = { TOP: 'T', JGL: 'J', MID: 'M', ADC: 'A', SUPP: 'S' };
+
+  const playerCells = ROLES.map((role, ri) =>
     DAYS.map(day => {
       const lineup = scrims[day].lineup;
       const complete = ROLES.every(r => lineup[r] != null);
@@ -240,7 +242,7 @@ function buildInviteContent() {
         const pid = lineup[role];
         if (!pid) return '';
         const score = playerProfiles[pid]?.[role] || 0;
-        return `${playerName(pid)} (${score})`;
+        return `${playerName(pid)} ${ROLE_SHORT[role]}${score}`;
       }
       const pid = scrims[day].available[ri];
       return pid ? playerName(pid) : '';
@@ -258,7 +260,7 @@ function buildInviteContent() {
   const colWidths = DAYS.map((_, i) => {
     let w = Math.max(headers[i].length, counts[i].length);
     if (anyComplete) w = Math.max(w, lineupScores[i].length);
-    for (const rr of roleCells) w = Math.max(w, rr[i].length);
+    for (const rr of playerCells) w = Math.max(w, rr[i].length);
     for (const sr of subCells) w = Math.max(w, sr[i].length);
     return w;
   });
@@ -283,13 +285,13 @@ function buildInviteContent() {
   text += sep;
 
   for (let ri = 0; ri < ROLES.length; ri++) {
-    text += makeRow(ROLES[ri], roleCells[ri]);
+    text += makeRow('', playerCells[ri]);
   }
 
   if (hasAnySub) {
     text += ' '.repeat(labelW) + ' \u2502 ' + colWidths.map(() => '').join(' \u2502 ') + '\n';
     for (let s = 0; s < maxSubs; s++) {
-      text += makeRow('sub', subCells[s]);
+      text += makeRow('', subCells[s]);
     }
   }
 
@@ -301,12 +303,13 @@ function buildInviteContent() {
     text += makeRow('lineup', DAYS.map(() => ''));
   }
 
+  text += sep;
   text += makeRow('multiopgg', DAYS.map(() => ''));
 
   text += '```';
 
   if (anyComplete) {
-    text += '\n> Lineup score = sum of assigned role preferences (max 15)';
+    text += '\n> T=TOP J=JGL M=MID A=ADC S=SUPP · number = role preference (max 3)';
   }
 
   return text;
