@@ -269,18 +269,17 @@ function buildInviteContent() {
   const labelW = 9;
   const pL = (s, w) => s.padStart(w);
   const pR = (s, w) => s.padEnd(w);
-  const hl = (w) => '\u2500'.repeat(w);
 
   const makeRow = (label, cells, right = false) => {
     const pad = right ? pL : pR;
-    return pR(label, labelW) + ' \u2502 ' + cells.map((c, i) => pad(c, colWidths[i])).join(' \u2502 ') + '\n';
+    return pR(label, labelW) + ' | ' + cells.map((c, i) => pad(c, colWidths[i])).join(' | ') + '\n';
   };
 
-  const sep = hl(labelW) + '\u2500\u253c\u2500' + colWidths.map(w => hl(w)).join('\u2500\u253c\u2500') + '\n';
+  const sep = '-'.repeat(labelW) + '-+-' + colWidths.map(w => '-'.repeat(w)).join('-+-') + '\n';
 
   let text = '## DISPO — SCRIM\n\n```\n';
 
-  text += ' '.repeat(labelW) + ' \u2502 ' + headers.map((h, i) => pL(h, colWidths[i])).join(' \u2502 ') + '\n';
+  text += ' '.repeat(labelW) + ' | ' + headers.map((h, i) => pL(h, colWidths[i])).join(' | ') + '\n';
   text += sep;
   text += makeRow('players', counts, true);
   text += sep;
@@ -290,7 +289,7 @@ function buildInviteContent() {
   }
 
   if (hasAnySub) {
-    text += ' '.repeat(labelW) + ' \u2502 ' + colWidths.map(() => '').join(' \u2502 ') + '\n';
+    text += ' '.repeat(labelW) + ' | ' + colWidths.map(() => '').join(' | ') + '\n';
     for (let s = 0; s < maxSubs; s++) {
       text += makeRow('', subCells[s]);
     }
