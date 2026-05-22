@@ -687,23 +687,38 @@ async function cleanupOldConfirmations(guild) {
   }
 }
 
+async function resetDay(guild, day) {
+  scrims[day] = {
+    available: [],
+    lineup: { TOP: null, JGL: null, MID: null, ADC: null, SUPP: null },
+    substitutes: []
+  };
+  await updateInviteTable(guild);
+}
+
 cron.schedule('30 5 * * *', async () => {
   console.log('Vérification auto des scrims (05:30)');
 
+  const jsDay = new Date().getDay();
+  const today = DAYS[(jsDay + 6) % 7];
+  const todayIdx = DAYS.indexOf(today);
+  const prevDay = DAYS[(todayIdx + 6) % 7];
+
   for (const guild of client.guilds.cache.values()) {
     await cleanupOldConfirmations(guild);
+    await resetDay(guild, prevDay);
   }
 
-  const jsDay = new Date().getDay();
-  const day = DAYS[(jsDay + 6) % 7];
-  if (!scrims[day] || scrims[day].available.length < 5) return;
+  await saveState();
 
-  const { lineup, substitutes } = calculateBestLineup(day);
-  scrims[day].lineup = lineup || { TOP: null, JGL: null, MID: null, ADC: null, SUPP: null };
-  scrims[day].substitutes = substitutes;
+  if (!scrims[today] || scrims[today].available.length < 5) return;
+
+  const { lineup, substitutes } = calculateBestLineup(today);
+  scrims[today].lineup = lineup || { TOP: null, JGL: null, MID: null, ADC: null, SUPP: null };
+  scrims[today].substitutes = substitutes;
 
   for (const guild of client.guilds.cache.values()) {
-    await tryPostConfirmation(guild, day);
+    await tryPostConfirmation(guild, today);
   }
 }, { timezone: TIMEZONE });
 
