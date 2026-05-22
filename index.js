@@ -214,24 +214,44 @@ function dayDate(day) {
 }
 
 function buildInviteContent() {
-  const headers = DAYS.map(d => `${d.slice(0, 3).toUpperCase()} ${dayDate(d)}`);
-  const counts = DAYS.map(d => String(scrims[d].available.length));
+  let text = '## DISPO — SCRIM\n';
 
-  const anyComplete = DAYS.some(d => ROLES.every(r => scrims[d].lineup[r] != null));
-  const hasAnySub = DAYS.some(d => scrims[d].substitutes.length > 0);
-  const maxSubs = Math.max(...DAYS.map(d => scrims[d].substitutes.length), 0);
+  for (const day of DAYS) {
+    const count = scrims[day].available.length;
+    const lineup = scrims[day].lineup;
+    const complete = ROLES.every(r => lineup[r] != null);
+    const date = dayDate(day);
+    const icon = complete ? ' ✅' : count > 0 ? ' ⚠️' : '';
 
-  const lineupScores = DAYS.map(d => {
-    const complete = ROLES.every(r => scrims[d].lineup[r] != null);
-    if (!complete) return '';
-    let total = 0;
-    const parts = [];
-    for (const role of ROLES) {
-      const pid = scrims[d].lineup[role];
-      const score = pid ? (playerProfiles[pid]?.[role] || 0) : 0;
-      total += score;
-      parts.push(String(score));
+    text += `\n**${day.toUpperCase()} ${date}** — ${count}/5${icon}\n`;
+
+    if (complete) {
+      const parts = [];
+      const scores = [];
+      for (const role of ROLES) {
+        const pid = lineup[role];
+        if (pid) {
+          const score = playerProfiles[pid]?.[role] || 0;
+          parts.push(`\`${role}\` ${playerName(pid)} **${score}**`);
+          scores.push(String(score));
+        }
+      }
+      text += parts.join(' · ') + '\n';
+
+      const subs = scrims[day].substitutes;
+      if (subs.length > 0) {
+        text += `*Sub: ${subs.map(id => playerName(id)).join(', ')}*\n`;
+      }
+
+      const total = scores.reduce((a, b) => a + Number(b), 0);
+      text += `Lineup: **${total}** (${scores.join('+')})\n`;
+    } else if (count > 0) {
+      text += scrims[day].available.map(id => playerName(id)).join(' · ') + '\n';
     }
+  }
+
+  return text;
+}
     return `${total} (${parts.join('+')})`;
   });
 
