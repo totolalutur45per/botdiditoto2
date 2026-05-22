@@ -105,7 +105,7 @@ async function saveState() {
 }
 
 function playerName(userId) {
-  return `<@${userId}>`;
+  return displayNames[userId] || '???';
 }
 
 function hasProfile(userId) {
@@ -212,20 +212,32 @@ function buildInviteContent() {
 
   const maxPlayers = Math.max(...DAYS.map(d => scrims[d].available.length), 0);
 
-  let text = '## DISPO — SCRIM\n\n';
-  text += '| ' + headers.join(' | ') + ' |\n';
-  text += '| ' + headers.map(() => '---').join(' | ') + ' |\n';
-
+  const rows = [];
   if (maxPlayers === 0) {
-    text += '| ' + DAYS.map(() => '\u200B').join(' | ') + ' |\n';
+    rows.push(DAYS.map(() => '\u200B'));
   } else {
     for (let i = 0; i < maxPlayers; i++) {
-      const row = DAYS.map(day => {
+      rows.push(DAYS.map(day => {
         const player = scrims[day].available[i];
         return player ? playerName(player) : '\u200B';
-      });
-      text += '| ' + row.join(' | ') + ' |\n';
+      }));
     }
+  }
+
+  const colW = Math.max(
+    8,
+    ...headers.map(h => h.length),
+    ...rows.flat().map(c => c.length)
+  );
+
+  const pad = (s) => s.padEnd(colW);
+
+  let text = '## DISPO — SCRIM\n\n';
+  text += '| ' + headers.map(pad).join(' | ') + ' |\n';
+  text += '| ' + DAYS.map(() => '-'.repeat(colW)).join(' | ') + ' |\n';
+
+  for (const row of rows) {
+    text += '| ' + row.map(pad).join(' | ') + ' |\n';
   }
 
   return text;
