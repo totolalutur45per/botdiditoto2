@@ -214,32 +214,37 @@ function buildInviteContent() {
 
   const rows = [];
   if (maxPlayers === 0) {
-    rows.push(DAYS.map(() => '\u200B'));
+    rows.push(DAYS.map(() => ''));
   } else {
     for (let i = 0; i < maxPlayers; i++) {
       rows.push(DAYS.map(day => {
         const player = scrims[day].available[i];
-        return player ? playerName(player) : '\u200B';
+        return player ? playerName(player) : '';
       }));
     }
   }
 
-  const colW = Math.max(
-    8,
-    ...headers.map(h => h.length),
-    ...rows.flat().map(c => c.length)
-  );
+  let colW = 0;
+  for (let i = 0; i < DAYS.length; i++) {
+    colW = Math.max(colW, headers[i].length);
+    for (const row of rows) {
+      colW = Math.max(colW, row[i].length);
+    }
+  }
+  colW = Math.max(colW, 8);
 
   const pad = (s) => s.padEnd(colW);
+  const sep = '-'.repeat(colW);
 
-  let text = '## DISPO — SCRIM\n\n';
-  text += '| ' + headers.map(pad).join(' | ') + ' |\n';
-  text += '| ' + DAYS.map(() => '-'.repeat(colW)).join(' | ') + ' |\n';
+  let text = '## DISPO — SCRIM\n\n```';
+  text += headers.map(pad).join(' | ') + '\n';
+  text += DAYS.map(() => sep).join('-+-') + '\n';
 
   for (const row of rows) {
-    text += '| ' + row.map(pad).join(' | ') + ' |\n';
+    text += row.map(pad).join(' | ') + '\n';
   }
 
+  text += '```';
   return text;
 }
 
