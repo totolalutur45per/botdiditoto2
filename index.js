@@ -452,16 +452,17 @@ const rest = new REST({ version: '10' }).setToken(TOKEN);
 client.once(Events.ClientReady, async () => {
   console.log(`Bot connecté : ${client.user.tag}`);
 
-  for (const guild of client.guilds.cache.values()) {
-    try {
-      await rest.put(Routes.applicationGuildCommands(CLIENT_ID, guild.id), { body: commands });
-      console.log(`Commandes enregistrées sur ${guild.name}`);
-    } catch (error) {
-      console.error(`Erreur enregistrement commandes sur ${guild.name}:`, error);
-    }
+  try {
+    await rest.put(Routes.applicationCommands(CLIENT_ID), { body: [] });
+    console.log('Anciennes commandes globales supprimées.');
+  } catch (error) {
+    console.error('Erreur suppression commandes globales:', error);
+  }
 
+  for (const guild of client.guilds.cache.values()) {
     await syncGuildChannels(guild);
   }
+  console.log('Prêt.');
 });
 
 client.on(Events.InteractionCreate, async interaction => {
