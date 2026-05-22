@@ -208,41 +208,47 @@ function buildInviteContent() {
   const headers = DAYS.map(d => d.slice(0, 3).toUpperCase());
   const counts = DAYS.map(d => String(scrims[d].available.length));
 
-  const maxPlayers = Math.max(...DAYS.map(d => scrims[d].available.length), 0);
+  const columns = DAYS.map(day => {
+    const lineup = scrims[day].lineup;
+    const complete = ROLES.every(role => lineup[role] != null);
 
-  const rows = [];
-  if (maxPlayers === 0) {
-    rows.push(DAYS.map(() => ''));
-  } else {
-    for (let i = 0; i < maxPlayers; i++) {
-      rows.push(DAYS.map(day => {
-        const player = scrims[day].available[i];
-        return player ? playerName(player) : '';
-      }));
+    if (complete) {
+      const cells = [];
+      for (const role of ROLES) {
+        const pid = lineup[role];
+        if (pid) cells.push(`${playerName(pid)} (${role})`);
+      }
+      for (const sub of scrims[day].substitutes) {
+        cells.push(`${playerName(sub)} (sub)`);
+      }
+      return cells;
     }
-  }
+    return scrims[day].available.map(id => playerName(id));
+  });
 
-  let colW = 0;
-  for (let i = 0; i < DAYS.length; i++) {
-    colW = Math.max(colW, headers[i].length, counts[i].length);
-    for (const row of rows) {
-      colW = Math.max(colW, row[i].length);
+  const maxRows = Math.max(...columns.map(c => c.length), 0);
+
+  const colWidths = DAYS.map((_, i) => {
+    let w = Math.max(headers[i].length, counts[i].length);
+    for (const cell of columns[i]) {
+      w = Math.max(w, cell.length);
     }
-  }
-  colW = Math.max(colW, 8);
+    return w;
+  });
 
   const padL = (s, w) => s.padStart(w);
   const padR = (s, w) => s.padEnd(w);
-  const bar = '─'.repeat(colW);
+  const bar = (w) => '─'.repeat(w);
 
   let text = '## DISPO — SCRIM\n\n```\n';
-  text += '  ' + headers.map(h => padL(h, colW)).join(' │ ') + '\n';
-  text += '  ' + DAYS.map(() => bar).join('─┼─') + '\n';
-  text += '  ' + counts.map(c => padL(c, colW)).join(' │ ') + '\n';
-  text += '  ' + DAYS.map(() => bar).join('─┼─') + '\n';
+  text += '  ' + headers.map((h, i) => padL(h, colWidths[i])).join(' │ ') + '\n';
+  text += '  ' + colWidths.map(bar).join('─┼─') + '\n';
+  text += '  ' + counts.map((c, i) => padL(c, colWidths[i])).join(' │ ') + '\n';
+  text += '  ' + colWidths.map(bar).join('─┼─') + '\n';
 
-  for (const row of rows) {
-    text += '  ' + row.map(c => padR(c, colW)).join(' │ ') + '\n';
+  for (let r = 0; r < maxRows; r++) {
+    const row = DAYS.map((_, i) => padR(columns[i][r] || '', colWidths[i]));
+    text += '  ' + row.join(' │ ') + '\n';
   }
 
   text += '```';
