@@ -275,7 +275,6 @@ function buildInviteButtons() {
           .setCustomId(`DISPO:${day}`)
           .setLabel(locked ? `🔒 ${day.slice(0, 3).toUpperCase()} (${count})` : `${day.slice(0, 3).toUpperCase()} (${count})`)
           .setStyle(locked ? ButtonStyle.Secondary : ButtonStyle.Primary)
-          .setDisabled(locked)
       );
     }
     return row;
