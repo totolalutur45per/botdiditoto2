@@ -590,12 +590,36 @@ async function handleButton(interaction) {
   await lock.acquire();
 
   try {
+    const isAvailable = scrims[day].available.includes(userId);
+
     if (isDayLocked(day)) {
-      await interaction.reply({ content: `🔒 Inscriptions fermées pour **${day.toUpperCase()}**.`, ephemeral: true });
+      if (!isAvailable) {
+        await interaction.reply({ content: `🔒 Inscriptions fermées pour **${day.toUpperCase()}**.`, ephemeral: true });
+        return;
+      }
+
+      scrims[day].available = scrims[day].available.filter(id => id !== userId);
+      const oldLineup = { ...scrims[day].lineup };
+      const { lineup, substitutes } = calculateBestLineup(day);
+      scrims[day].lineup = lineup || { TOP: null, JGL: null, MID: null, ADC: null, SUPP: null };
+      scrims[day].substitutes = substitutes;
+      await saveState();
+      await updateInviteTable(interaction.guild);
+      await interaction.deferUpdate();
+
+      if (lineup) {
+        const oldPlayers = Object.values(oldLineup).filter(Boolean);
+        const promoted = Object.values(lineup).find(p => p && !oldPlayers.includes(p));
+        if (promoted) {
+          const inviteChannel = interaction.guild.channels.cache.find(c => c.name === INVITE_CHANNEL);
+          if (inviteChannel) await inviteChannel.send(`🔄 <@${promoted}> promu dans la lineup **${day.toUpperCase()}** !`);
+        }
+      } else {
+        const inviteChannel = interaction.guild.channels.cache.find(c => c.name === INVITE_CHANNEL);
+        if (inviteChannel) await inviteChannel.send(`⚠️ **${day.toUpperCase()}** — Un joueur s'est désisté ! Il reste **${scrims[day].available.length}/5** inscrits.`);
+      }
       return;
     }
-
-    const isAvailable = scrims[day].available.includes(userId);
 
     if (isAvailable) {
       scrims[day].available = scrims[day].available.filter(id => id !== userId);
