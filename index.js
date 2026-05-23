@@ -111,6 +111,40 @@ function hasProfile(userId) {
   return playerProfiles[userId] != null;
 }
 
+function permute(arr) {
+  if (arr.length <= 1) return [arr];
+  const result = [];
+  for (let i = 0; i < arr.length; i++) {
+    const current = arr[i];
+    const remaining = [...arr.slice(0, i), ...arr.slice(i + 1)];
+    for (const perm of permute(remaining)) {
+      result.push([current, ...perm]);
+    }
+  }
+  return result;
+}
+
+const ROLE_PERMUTATIONS = permute(ROLES);
+
+function evaluateCombo(combo) {
+  let bestScore = -1;
+  let bestAssignment = null;
+
+  for (const roleOrder of ROLE_PERMUTATIONS) {
+    let score = 0;
+    for (let i = 0; i < combo.length; i++) {
+      const prefs = playerProfiles[combo[i]] || {};
+      score += prefs[roleOrder[i]] || 0;
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestAssignment = roleOrder;
+    }
+  }
+
+  return { score: bestScore, assignment: bestAssignment };
+}
+
 function calculateBestLineup(day) {
   const available = scrims[day].available;
 
@@ -121,12 +155,14 @@ function calculateBestLineup(day) {
   const combinations = generateCombinations(available, 5);
   let bestScore = -1;
   let bestCombination = null;
+  let bestAssignment = null;
 
   for (const combo of combinations) {
-    const score = calculateComboScore(combo);
+    const { score, assignment } = evaluateCombo(combo);
     if (score > bestScore) {
       bestScore = score;
       bestCombination = combo;
+      bestAssignment = assignment;
     }
   }
 
@@ -134,7 +170,10 @@ function calculateBestLineup(day) {
     return { lineup: null, substitutes: [] };
   }
 
-  const lineup = assignRolesToCombo(bestCombination);
+  const lineup = { TOP: null, JGL: null, MID: null, ADC: null, SUPP: null };
+  for (let i = 0; i < bestCombination.length; i++) {
+    lineup[bestAssignment[i]] = bestCombination[i];
+  }
   const substitutes = available.filter(id => !bestCombination.includes(id));
 
   return { lineup, substitutes };
@@ -151,56 +190,6 @@ function generateCombinations(arr, size) {
     }
   }
   return result;
-}
-
-function calculateComboScore(combo) {
-  let score = 0;
-  const used = new Set();
-
-  for (const userId of combo) {
-    const prefs = playerProfiles[userId] || {};
-    let bestRole = null;
-    let bestScore = -1;
-
-    for (const role of ROLES) {
-      if (!used.has(role) && (prefs[role] || 0) > bestScore) {
-        bestScore = prefs[role] || 0;
-        bestRole = role;
-      }
-    }
-
-    if (bestRole) {
-      used.add(bestRole);
-      score += bestScore;
-    }
-  }
-
-  return score;
-}
-
-function assignRolesToCombo(combo) {
-  const lineup = { TOP: null, JGL: null, MID: null, ADC: null, SUPP: null };
-  const used = new Set();
-
-  for (const userId of combo) {
-    const prefs = playerProfiles[userId] || {};
-    let bestRole = null;
-    let bestScore = -1;
-
-    for (const role of ROLES) {
-      if (!used.has(role) && (prefs[role] || 0) > bestScore) {
-        bestScore = prefs[role] || 0;
-        bestRole = role;
-      }
-    }
-
-    if (bestRole) {
-      used.add(bestRole);
-      lineup[bestRole] = userId;
-    }
-  }
-
-  return lineup;
 }
 
 function dayDate(day) {
