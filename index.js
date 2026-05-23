@@ -129,16 +129,21 @@ const ROLE_PERMUTATIONS = permute(ROLES);
 function evaluateCombo(combo) {
   let bestScore = -1;
   let bestAssignment = null;
+  let bestTiebreaker = 0;
 
   for (const roleOrder of ROLE_PERMUTATIONS) {
     let score = 0;
+    let tiebreaker = 0;
     for (let i = 0; i < combo.length; i++) {
       const prefs = playerProfiles[combo[i]] || {};
-      score += prefs[roleOrder[i]] || 0;
+      const pref = prefs[roleOrder[i]] || 0;
+      score += pref;
+      if (pref === 3) tiebreaker += combo.length - i;
     }
-    if (score > bestScore) {
+    if (score > bestScore || (score === bestScore && tiebreaker > bestTiebreaker)) {
       bestScore = score;
       bestAssignment = roleOrder;
+      bestTiebreaker = tiebreaker;
     }
   }
 
