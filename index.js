@@ -299,10 +299,6 @@ async function updateInviteTable(guild) {
   } else {
     await inviteChannel.send(opts);
   }
-
-  for (let i = 1; i < botMsgs.length; i++) {
-    try { await botMsgs[i].delete(); } catch (e) {}
-  }
 }
 
 async function getOrCreateChannel(guild, name) {
@@ -640,13 +636,10 @@ async function cleanupOldConfirmations(guild) {
   if (!channel) return;
 
   const msgs = await channel.messages.fetch({ limit: 50 });
-  const botMsgs = msgs.filter(m => m.author.id === client.user.id)
-    .sort((a, b) => a.createdTimestamp - b.createdTimestamp);
-
-  if (botMsgs.length <= 1) return;
-
-  for (let i = 1; i < botMsgs.length; i++) {
-    try { await botMsgs[i].delete(); } catch (e) {}
+  for (const msg of msgs.filter(m => m.author.id === client.user.id).values()) {
+    if (msg.content.includes('🎮 **Composition')) {
+      try { await msg.delete(); } catch (e) {}
+    }
   }
 }
 
