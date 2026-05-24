@@ -339,7 +339,7 @@ async function confirmScrim(guild, day) {
   const lineup = scrims[day].lineup;
   if (!lineup || !ROLES.every(r => lineup[r] != null)) return;
 
-  let text = `🎮 **Composition — ${day.toUpperCase()} (20h30)**\n`;
+  let text = `🎮 **Composition — ${day.toUpperCase()}**\n`;
   for (const role of ROLES) {
     text += `**${role}** : <@${lineup[role]}>\n`;
   }
@@ -347,7 +347,7 @@ async function confirmScrim(guild, day) {
   if (subs.length > 0) {
     text += `\n**Remplaçants:** ${subs.map(id => `<@${id}>`).join(', ')}\n`;
   }
-  text += `\n✅ Scrim confirmé à 20h30 !`;
+  text += `\n✅ Scrim confirmé !`;
 
   await inviteChannel.send(text);
 }
