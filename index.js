@@ -357,7 +357,7 @@ async function confirmScrim(guild, day) {
 
   if (riotIds.length > 0) {
     const encoded = riotIds.map(id => encodeURIComponent(id)).join(',');
-    text += `\n**Team OPGG:** https://www.op.gg/multisearch/euw?summoners=${encoded}\n`;
+    text += `\n**Team OPGG:** <https://www.op.gg/multisearch/euw?summoners=${encoded}>\n`;
   }
 
   text += `\n✅ Scrim confirmé !`;
