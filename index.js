@@ -294,13 +294,11 @@ async function updateInviteTable(guild) {
   if (!inviteChannel) return;
 
   const msgs = await inviteChannel.messages.fetch({ limit: 100 });
-  const botMsgs = [...msgs.filter(m => m.author.id === client.user.id).values()]
-    .sort((a, b) => a.createdTimestamp - b.createdTimestamp);
-
   const opts = { content: buildInviteContent(), components: buildInviteButtons() };
+  const dispo = msgs.find(m => m.author.id === client.user.id && m.content.startsWith('## DISPO'));
 
-  if (botMsgs[0]) {
-    await botMsgs[0].edit(opts);
+  if (dispo) {
+    await dispo.edit(opts);
   } else {
     await inviteChannel.send(opts);
   }
