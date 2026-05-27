@@ -450,7 +450,15 @@ const commands = [
     .setDescription('Reset toutes les inscriptions et renvoie les invitations'),
   new SlashCommandBuilder()
     .setName('setpref')
-    .setDescription('Définir vos préférences de rôles (0-3 points par rôle)')
+    .setDescription('Définir vos préférences de rôles (0-3 points par rôle)'),
+  new SlashCommandBuilder()
+    .setName('confirm')
+    .setDescription('Reposter le message de confirmation pour un jour')
+    .addStringOption(option =>
+      option.setName('day')
+        .setDescription('Jour à confirmer')
+        .setRequired(true)
+        .addChoices(...DAYS.map(d => ({ name: d, value: d }))))
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(TOKEN);
@@ -523,6 +531,18 @@ async function handleCommand(interaction) {
     await interaction.editReply(
       `Semaine réinitialisée ! Salon <#${inviteChannel?.id}>.`
     );
+  }
+
+  if (commandName === 'confirm') {
+    await interaction.deferReply({ ephemeral: true });
+    const day = interaction.options.getString('day');
+    const lineup = scrims[day]?.lineup;
+    if (!lineup || !ROLES.every(r => lineup[r] != null)) {
+      await interaction.editReply(`⚠️ Composition incomplète pour **${day.toUpperCase()}**, confirmation impossible.`);
+      return;
+    }
+    await confirmScrim(guild, day);
+    await interaction.editReply(`✅ Message de confirmation reposté pour **${day.toUpperCase()}** !`);
   }
 }
 
@@ -614,30 +634,42 @@ async function handleModal(interaction) {
   let dayLocked = false;
 
   if (autoDay && DAYS.includes(autoDay) && guild) {
-    const lock = locks[autoDay];
-    await lock.acquire();
-
-    try {
-      if (!scrims[autoDay].available.includes(userId)) {
-        if (isDayLocked(autoDay)) {
-          dayLocked = true;
-        } else {
-          scrims[autoDay].available.push(userId);
-          autoRegistered = true;
-
-          const { lineup, substitutes } = calculateBestLineup(autoDay);
-          scrims[autoDay].lineup = lineup || { TOP: null, JGL: null, MID: null, ADC: null, SUPP: null };
-          scrims[autoDay].substitutes = substitutes;
-
-          await saveState();
-          await tryPostConfirmation(guild, autoDay);
-          await updateInviteTable(guild);
+    if (playerProfiles[userId]?.riotId) {
+      const lock = locks[autoDay];
+      await lock.acquire();
+      try {
+        if (!scrims[autoDay].available.includes(userId)) {
+          if (isDayLocked(autoDay)) {
+            dayLocked = true;
+          } else {
+            scrims[autoDay].available.push(userId);
+            autoRegistered = true;
+            const { lineup, substitutes } = calculateBestLineup(autoDay);
+            scrims[autoDay].lineup = lineup || { TOP: null, JGL: null, MID: null, ADC: null, SUPP: null };
+            scrims[autoDay].substitutes = substitutes;
+            await saveState();
+            await tryPostConfirmation(guild, autoDay);
+            await updateInviteTable(guild);
+          }
         }
+      } catch (err) {
+        console.error('Erreur auto-register:', err.message);
+      } finally {
+        lock.release();
       }
-    } catch (err) {
-      console.error('Erreur auto-register:', err.message);
-    } finally {
-      lock.release();
+    } else {
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`OPGG_BTN:${autoDay}`)
+          .setLabel('Ajouter mon Riot ID')
+          .setStyle(ButtonStyle.Success)
+      );
+      await interaction.reply({
+        content: `✅ Préférences sauvegardées !\nAjoutez votre Riot ID pour finaliser l'inscription à **${autoDay.toUpperCase()}**.`,
+        components: [row],
+        ephemeral: true
+      });
+      return;
     }
   }
 
@@ -646,7 +678,7 @@ async function handleModal(interaction) {
   else if (dayLocked) extra = `\n⚠️ Inscriptions fermées pour **${autoDay.toUpperCase()}**`;
 
   const components = [];
-  if (!autoRegistered && !autoDay && !playerProfiles[userId]?.riotId) {
+  if (!autoDay && !playerProfiles[userId]?.riotId) {
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId('OPGG_BTN')
@@ -671,41 +703,6 @@ async function handleButton(interaction) {
   const userId = interaction.user.id;
   displayNames[userId] = interaction.user.username;
 
-  if (action === 'REGISTER' && day && DAYS.includes(day)) {
-    const lock = locks[day];
-    await lock.acquire();
-    try {
-      if (isDayLocked(day)) {
-        await interaction.update({ content: `🔒 Inscriptions fermées pour **${day.toUpperCase()}**.`, components: [], ephemeral: true });
-        return;
-      }
-      if (scrims[day].available.includes(userId)) {
-        await interaction.update({ content: `✅ Vous êtes déjà inscrit pour **${day.toUpperCase()}**.`, components: [], ephemeral: true });
-        return;
-      }
-      scrims[day].available.push(userId);
-      const { lineup, substitutes } = calculateBestLineup(day);
-      scrims[day].lineup = lineup || { TOP: null, JGL: null, MID: null, ADC: null, SUPP: null };
-      scrims[day].substitutes = substitutes;
-      await saveState();
-      await tryPostConfirmation(interaction.guild, day);
-      await updateInviteTable(interaction.guild);
-      await interaction.update({ content: `✅ Inscrit pour **${day.toUpperCase()}** !`, components: [], ephemeral: true });
-    } catch (err) {
-      console.error('Erreur REGISTER:', err.message);
-    } finally {
-      lock.release();
-    }
-    return;
-  }
-
-  if (action === 'EDIT_PREF') {
-    const d = parts[1] && DAYS.includes(parts[1]) ? parts[1] : null;
-    const modal = showPrefModal(userId, d);
-    await interaction.showModal(modal);
-    return;
-  }
-
   if (action === 'OPGG_BTN') {
     const d = parts[1] && DAYS.includes(parts[1]) ? parts[1] : null;
     const modal = showRiotIdModal(userId, d);
@@ -724,12 +721,24 @@ async function handleButton(interaction) {
     return;
   }
 
-  const isAvailable = scrims[day].available.includes(userId);
+  if (!playerProfiles[userId]?.riotId) {
+    const modal = showRiotIdModal(userId, day);
+    await interaction.showModal(modal);
+    return;
+  }
 
-  if (isAvailable) {
-    const lock = locks[day];
-    await lock.acquire();
-    try {
+  const lock = locks[day];
+  await lock.acquire();
+
+  try {
+    const isAvailable = scrims[day].available.includes(userId);
+
+    if (isDayLocked(day)) {
+      if (!isAvailable) {
+        await interaction.reply({ content: `🔒 Inscriptions fermées pour **${day.toUpperCase()}**.`, ephemeral: true });
+        return;
+      }
+
       scrims[day].available = scrims[day].available.filter(id => id !== userId);
       const oldLineup = { ...scrims[day].lineup };
       const { lineup, substitutes } = calculateBestLineup(day);
@@ -750,42 +759,31 @@ async function handleButton(interaction) {
         const inviteChannel = interaction.guild.channels.cache.find(c => c.name === INVITE_CHANNEL);
         if (inviteChannel) await inviteChannel.send(`⚠️ **${day.toUpperCase()}** — Un joueur s'est désisté ! Il reste **${scrims[day].available.length}/5** inscrits.`);
       }
-    } catch (err) {
-      console.error('Erreur désinscription:', err.message);
-    } finally {
-      lock.release();
+      return;
     }
-    return;
+
+    if (isAvailable) {
+      scrims[day].available = scrims[day].available.filter(id => id !== userId);
+    } else {
+      scrims[day].available.push(userId);
+    }
+
+    const { lineup, substitutes } = calculateBestLineup(day);
+    scrims[day].lineup = lineup || { TOP: null, JGL: null, MID: null, ADC: null, SUPP: null };
+    scrims[day].substitutes = substitutes;
+
+    await saveState();
+    await tryPostConfirmation(interaction.guild, day);
+    await updateInviteTable(interaction.guild);
+    await interaction.deferUpdate();
+  } catch (err) {
+    console.error('Erreur interaction bouton:', err.message);
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.deferUpdate().catch(() => {});
+    }
+  } finally {
+    lock.release();
   }
-
-  const profile = playerProfiles[userId] || {};
-  const prefText = ROLES.map(r => `${r}:${profile[r]||0}`).join(' ');
-  const riotText = profile.riotId ? `Riot ID: ${profile.riotId}` : 'Riot ID: *Non défini*';
-
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`REGISTER:${day}`)
-      .setLabel(`✅ S'inscrire pour ${day}`)
-      .setStyle(ButtonStyle.Success),
-    new ButtonBuilder()
-      .setCustomId(`EDIT_PREF:${day}`)
-      .setLabel('Préférences')
-      .setStyle(ButtonStyle.Secondary)
-  );
-  if (!profile.riotId) {
-    row.addComponents(
-      new ButtonBuilder()
-        .setCustomId(`OPGG_BTN:${day}`)
-        .setLabel('+ Riot ID')
-        .setStyle(ButtonStyle.Secondary)
-    );
-  }
-
-  await interaction.reply({
-    content: `**Votre profil**\n\`\`\`${prefText}\`\`\`${riotText}\n\nCliquez sur **S'inscrire** pour confirmer pour **${day.toUpperCase()}**.`,
-    components: [row],
-    ephemeral: true
-  });
 }
 
 async function tryPostConfirmation(guild, day) {
