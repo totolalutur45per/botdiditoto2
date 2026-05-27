@@ -501,7 +501,7 @@ async function handleCommand(interaction) {
 
   if (commandName === 'setpref') {
     displayNames[user.id] = user.username;
-    const modal = showPrefModal(user.id);
+    const modal = showRiotIdModal(user.id, 'SETPREF');
     await interaction.showModal(modal);
     return;
   }
@@ -565,18 +565,30 @@ async function handleModal(interaction) {
     displayNames[userId] = user.username;
     await saveState();
 
-    const day = customId.split(':')[2];
-    if (day && DAYS.includes(day) && guild) {
-      const lock = locks[day];
+    const target = customId.split(':')[2];
+    if (target === 'SETPREF') {
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('SETPREF_CONTINUE')
+          .setLabel('Choisir mes rôles')
+          .setStyle(ButtonStyle.Success)
+      );
+      await interaction.reply({
+        content: `✅ Riot ID mis à jour : ${riotId}\nCliquez pour définir vos préférences de rôles.`,
+        components: [row],
+        ephemeral: true
+      });
+    } else if (target && DAYS.includes(target) && guild) {
+      const lock = locks[target];
       await lock.acquire();
       try {
-        if (!isDayLocked(day) && !scrims[day].available.includes(userId)) {
-          scrims[day].available.push(userId);
-          const { lineup, substitutes } = calculateBestLineup(day);
-          scrims[day].lineup = lineup || { TOP: null, JGL: null, MID: null, ADC: null, SUPP: null };
-          scrims[day].substitutes = substitutes;
+        if (!isDayLocked(target) && !scrims[target].available.includes(userId)) {
+          scrims[target].available.push(userId);
+          const { lineup, substitutes } = calculateBestLineup(target);
+          scrims[target].lineup = lineup || { TOP: null, JGL: null, MID: null, ADC: null, SUPP: null };
+          scrims[target].substitutes = substitutes;
           await saveState();
-          await tryPostConfirmation(guild, day);
+          await tryPostConfirmation(guild, target);
           await updateInviteTable(guild);
         }
       } catch (err) {
@@ -584,12 +596,16 @@ async function handleModal(interaction) {
       } finally {
         lock.release();
       }
+      await interaction.reply({
+        content: `✅ Riot ID mis à jour : ${riotId}\n📝 Inscrit pour **${target.toUpperCase()}** !`,
+        ephemeral: true
+      });
+    } else {
+      await interaction.reply({
+        content: `✅ Riot ID mis à jour : ${riotId}`,
+        ephemeral: true
+      });
     }
-
-    await interaction.reply({
-      content: `✅ Riot ID mis à jour : ${riotId}`,
-      ephemeral: true
-    });
     return;
   }
 
@@ -677,20 +693,8 @@ async function handleModal(interaction) {
   if (autoRegistered) extra = `\n📝 Inscrit automatiquement pour **${autoDay.toUpperCase()}**`;
   else if (dayLocked) extra = `\n⚠️ Inscriptions fermées pour **${autoDay.toUpperCase()}**`;
 
-  const components = [];
-  if (!autoDay && !playerProfiles[userId]?.riotId) {
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId('OPGG_BTN')
-        .setLabel('Ajouter Riot ID')
-        .setStyle(ButtonStyle.Secondary)
-    );
-    components.push(row);
-  }
-
   await interaction.reply({
     content: `✅ Préférences mises à jour!\n${ROLES.map(r => `${r}: ${playerProfiles[userId][r]}`).join(' | ')}${extra}`,
-    components,
     ephemeral: true
   });
 }
@@ -706,6 +710,12 @@ async function handleButton(interaction) {
   if (action === 'OPGG_BTN') {
     const d = parts[1] && DAYS.includes(parts[1]) ? parts[1] : null;
     const modal = showRiotIdModal(userId, d);
+    await interaction.showModal(modal);
+    return;
+  }
+
+  if (action === 'SETPREF_CONTINUE') {
+    const modal = showPrefModal(userId);
     await interaction.showModal(modal);
     return;
   }
