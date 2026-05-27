@@ -295,10 +295,15 @@ async function updateInviteTable(guild) {
 
   const msgs = await inviteChannel.messages.fetch({ limit: 100 });
   const opts = { content: buildInviteContent(), components: buildInviteButtons() };
-  const dispo = msgs.find(m => m.author.id === client.user.id && m.content.startsWith('## DISPO'));
+  const dispos = msgs.filter(m => m.author.id === client.user.id && m.content.startsWith('## DISPO'));
 
-  if (dispo) {
-    await dispo.edit(opts);
+  if (dispos.size > 0) {
+    await dispos.first().edit(opts);
+    for (const [, msg] of dispos) {
+      if (msg !== dispos.first()) {
+        try { await msg.delete(); } catch (e) {}
+      }
+    }
   } else {
     await inviteChannel.send(opts);
   }
@@ -319,18 +324,7 @@ async function getOrCreateChannel(guild, name) {
 }
 
 async function syncGuildChannels(guild) {
-  const inviteChannel = guild.channels.cache.find(c => c.name === INVITE_CHANNEL);
-  if (!inviteChannel) return;
-
-  const msgs = await inviteChannel.messages.fetch({ limit: 100 });
-  const botMsgs = msgs.filter(m => m.author.id === client.user.id);
-  for (const msg of botMsgs.values()) {
-    if (msg.content.startsWith('## DISPO')) {
-      try { await msg.delete(); } catch (e) {}
-    }
-  }
-
-  await inviteChannel.send({ content: buildInviteContent(), components: buildInviteButtons() });
+  await updateInviteTable(guild);
 }
 
 async function confirmScrim(guild, day) {
