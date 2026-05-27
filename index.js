@@ -566,7 +566,7 @@ async function handleCommand(interaction) {
       return;
     }
     await confirmScrim(guild, day);
-    await interaction.editReply(`✅ Message de confirmation reposté pour **${day.toUpperCase()}** !`);
+    await interaction.editReply(`✅ Message de confirmation reposté pour **${day.toUpperCase()}**\n📌 Fil créé avec les joueurs.`);
   }
 }
 
