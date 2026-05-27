@@ -840,6 +840,20 @@ async function cleanupOldConfirmations(guild) {
       try { await msg.delete(); } catch (e) {}
     }
   }
+
+  const activeThreads = await channel.threads.fetchActive();
+  for (const [, thread] of activeThreads.threads) {
+    if (thread.name.startsWith('Composition - ')) {
+      try { await thread.delete(); } catch (e) {}
+    }
+  }
+
+  const archived = await channel.threads.fetchArchived();
+  for (const [, thread] of archived.threads) {
+    if (thread.name.startsWith('Composition - ')) {
+      try { await thread.delete(); } catch (e) {}
+    }
+  }
 }
 
 async function resetDay(guild, day) {
