@@ -7,6 +7,7 @@ const {
   SlashCommandBuilder,
   ChannelType,
   PermissionsBitField,
+  MessageType,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
@@ -362,7 +363,30 @@ async function confirmScrim(guild, day) {
 
   text += `\n✅ Scrim confirmé !`;
 
-  await inviteChannel.send(text);
+  const msg = await inviteChannel.send(text);
+
+  try {
+    const thread = await msg.startThread({
+      name: `Composition - ${day.toUpperCase()}`,
+      autoArchiveDuration: 1440,
+    });
+
+    for (const role of ROLES) {
+      const pid = lineup[role];
+      if (pid) {
+        try { await thread.members.add(pid); } catch (e) {}
+      }
+    }
+    for (const sid of subs) {
+      try { await thread.members.add(sid); } catch (e) {}
+    }
+
+    const recent = await inviteChannel.messages.fetch({ limit: 2 });
+    const sysMsg = recent.find(m => m.type === MessageType.ThreadCreated && m.thread?.id === thread.id);
+    if (sysMsg) await sysMsg.delete().catch(() => {});
+  } catch (err) {
+    console.error('Erreur création fil:', err.message);
+  }
 }
 
 async function fullReset(guild) {
