@@ -326,7 +326,9 @@ async function syncGuildChannels(guild) {
   const msgs = await inviteChannel.messages.fetch({ limit: 100 });
   const botMsgs = msgs.filter(m => m.author.id === client.user.id);
   for (const msg of botMsgs.values()) {
-    try { await msg.delete(); } catch (e) {}
+    if (msg.content.startsWith('## DISPO')) {
+      try { await msg.delete(); } catch (e) {}
+    }
   }
 
   await inviteChannel.send({ content: buildInviteContent(), components: buildInviteButtons() });
