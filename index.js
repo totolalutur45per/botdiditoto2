@@ -371,15 +371,18 @@ async function confirmScrim(guild, day) {
       autoArchiveDuration: 1440,
     });
 
+    const mentions = [];
     for (const role of ROLES) {
       const pid = lineup[role];
       if (pid) {
         try { await thread.members.add(pid); } catch (e) {}
+        mentions.push(`<@${pid}>`);
       }
     }
     for (const sid of subs) {
       try { await thread.members.add(sid); } catch (e) {}
     }
+    await thread.send(`📢 ${mentions.join(' ')} — Composition prête pour **${day.toUpperCase()}** !`);
 
     const recent = await inviteChannel.messages.fetch({ limit: 2 });
     const sysMsg = recent.find(m => m.type === MessageType.ThreadCreated && m.thread?.id === thread.id);
