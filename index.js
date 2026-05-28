@@ -786,7 +786,14 @@ async function handleButton(interaction) {
         }
       } else {
         const inviteChannel = interaction.guild.channels.cache.find(c => c.name === INVITE_CHANNEL);
-        if (inviteChannel) await inviteChannel.send(`⚠️ **${day.toUpperCase()}** — Un joueur s'est désisté ! Il reste **${scrims[day].available.length}/5** inscrits.`);
+        if (inviteChannel) {
+          const jsDay = new Date().getDay();
+          const today = DAYS[(jsDay + 6) % 7];
+          if (day === today) {
+            const remainingMentions = scrims[day].available.map(id => `<@${id}>`).join(' ');
+            await inviteChannel.send(`⚠️ **${day.toUpperCase()}** — Un joueur s'est désisté ! Il reste **${scrims[day].available.length}/5** inscrits. ${remainingMentions}, il faut chercher un last pour ce soir`);
+          }
+        }
       }
       return;
     }
@@ -831,7 +838,7 @@ async function cleanupOldConfirmations(guild) {
 
   const msgs = await channel.messages.fetch({ limit: 50 });
   for (const msg of msgs.filter(m => m.author.id === client.user.id).values()) {
-    if (msg.content.includes('🎮 **Composition')) {
+    if (msg.content.includes('🎮 **Composition') || msg.content.includes("s'est désisté")) {
       try { await msg.delete(); } catch (e) {}
     }
   }
