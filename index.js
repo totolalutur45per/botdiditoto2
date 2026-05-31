@@ -1,3 +1,5 @@
+require('dotenv').config();
+
 const {
   Client,
   GatewayIntentBits,
@@ -18,6 +20,9 @@ const {
 
 const cron = require('node-cron');
 const fs = require('fs/promises');
+const express = require('express');
+const cors = require('cors');
+const path = require('path');
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID;
@@ -905,6 +910,97 @@ cron.schedule('0 0 * * 1', async () => {
   }
 }, { timezone: TIMEZONE });
 
+function startWebServer() {
+  const app = express();
+  const webPort = parseInt(process.env.PORT_WEB || '3001', 10);
+
+  app.use(cors());
+  app.use(express.json());
+
+  app.get('/api/players', (req, res) => {
+    const players = Object.entries(playerProfiles).map(([id, prefs]) => ({
+      id,
+      name: displayNames[id] || id,
+      preferences: { ...prefs }
+    }));
+    res.json(players);
+  });
+
+  app.put('/api/players/:id', async (req, res) => {
+    const { id } = req.params;
+    const { preferences } = req.body;
+
+    if (!preferences || typeof preferences !== 'object') {
+      return res.status(400).json({ error: 'preferences object required' });
+    }
+
+    for (const role of ROLES) {
+      const val = preferences[role];
+      if (val == null) continue;
+      const score = parseInt(val, 10);
+      if (isNaN(score) || score < 0 || score > 3) {
+        return res.status(400).json({ error: `${role} must be 0-3` });
+      }
+    }
+
+    if (!playerProfiles[id]) playerProfiles[id] = {};
+    for (const role of ROLES) {
+      if (preferences[role] != null) {
+        playerProfiles[id][role] = parseInt(preferences[role], 10);
+      }
+    }
+
+    await saveState();
+
+    for (const day of DAYS) {
+      const lock = locks[day];
+      await lock.acquire();
+      try {
+        if (scrims[day].available.includes(id)) {
+          const { lineup, substitutes } = calculateBestLineup(day);
+          scrims[day].lineup = lineup || { TOP: null, JGL: null, MID: null, ADC: null, SUPP: null };
+          scrims[day].substitutes = substitutes;
+          await saveState();
+          for (const guild of client.guilds.cache.values()) {
+            await updateInviteTable(guild);
+          }
+        }
+      } finally {
+        lock.release();
+      }
+    }
+
+    res.json({ id, name: displayNames[id] || id, preferences: playerProfiles[id] });
+  });
+
+  app.get('/api/scrims', (req, res) => {
+    const result = {};
+    for (const day of DAYS) {
+      const s = scrims[day];
+      result[day] = {
+        available: s.available.map(id => ({ id, name: playerName(id) })),
+        lineup: Object.fromEntries(
+          ROLES.map(r => [r, s.lineup[r] ? { id: s.lineup[r], name: playerName(s.lineup[r]) } : null])
+        ),
+        substitutes: s.substitutes.map(id => ({ id, name: playerName(id) }))
+      };
+    }
+    res.json(result);
+  });
+
+  const staticDir = path.join(__dirname, 'web', 'dist');
+  app.use(express.static(staticDir));
+  app.get('/{*path}', (req, res) => {
+    res.sendFile(path.join(staticDir, 'index.html'), (err) => {
+      if (err) res.status(404).send('Web dashboard not built. Run: cd web && npm run build');
+    });
+  });
+
+  app.listen(webPort, () => {
+    console.log(`Web dashboard API on port ${webPort}`);
+  });
+}
+
 async function shutdown() {
   console.log('Arrêt en cours...');
   await saveState();
@@ -917,5 +1013,6 @@ process.on('SIGTERM', shutdown);
 
 (async () => {
   await loadState();
+  startWebServer();
   client.login(TOKEN);
 })();

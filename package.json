@@ -3,10 +3,14 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
+    "build": "cd web && npm install && npm run build",
     "start": "node index.js"
   },
   "dependencies": {
+    "cors": "^2.8.6",
     "discord.js": "^14.19.3",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
     "node-cron": "^3.0.3"
   }
 }
