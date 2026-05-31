@@ -225,11 +225,10 @@ function buildInviteContent() {
     const lineup = scrims[day].lineup;
     const complete = ROLES.every(r => lineup[r] != null);
     const date = dayDate(day);
-    const icon = complete ? ' ✅' : count > 0 ? ' ⚠️' : '';
-
-    text += `\n**${day.toUpperCase()} ${date}** — ${count}/5${icon}\n`;
 
     if (complete) {
+      text += `\n**${day.toUpperCase()} ${date}** — ${count} players (continuez a vous inscrire, lineup lock ${day} a 05:30)\n`;
+
       const parts = [];
       const scores = [];
       for (const role of ROLES) {
@@ -250,7 +249,10 @@ function buildInviteContent() {
       const total = scores.reduce((a, b) => a + Number(b), 0);
       text += `Lineup: **${total}** (${scores.join('+')})\n`;
     } else if (count > 0) {
+      text += `\n**${day.toUpperCase()} ${date}** — ${count} players\n`;
       text += scrims[day].available.map(id => playerName(id)).join(' · ') + '\n';
+    } else {
+      text += `\n**${day.toUpperCase()} ${date}** — 0\n`;
     }
   }
 
