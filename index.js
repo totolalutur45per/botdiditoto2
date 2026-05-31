@@ -367,7 +367,7 @@ async function confirmScrim(guild, day) {
 
     let threadText = `📢 ${mentions.join(' ')} — Composition prête pour **${day.toUpperCase()}** !`;
 
-    threadText += `\n\n**Pour trouver un scrim ce soir**, postez sur **LOL FR** (recrutement/scrim) ou dans vos contacts. Généralement les scrims se jouent vers **20H/21H**. Qui peut s'en occuper ?`;
+    threadText += `\n\n**Pour trouver un scrim ce soir**, postez/mp sur discord **League of legends FR** (channel scrims) ou dans vos contacts. Généralement les scrims se jouent vers **20H/21H**. Qui peut s'en occuper ?`;
 
     const riotIds = ROLES.map(role => {
       const pid = lineup[role];
