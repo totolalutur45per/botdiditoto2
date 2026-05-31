@@ -343,16 +343,6 @@ async function confirmScrim(guild, day) {
     text += `\n**Remplaçants:** ${subs.map(id => `<@${id}>`).join(', ')}\n`;
   }
 
-  const riotIds = ROLES.map(role => {
-    const pid = lineup[role];
-    return playerProfiles[pid]?.riotId;
-  }).filter(Boolean);
-
-  if (riotIds.length > 0) {
-    const encoded = riotIds.map(id => encodeURIComponent(id)).join(',');
-    text += `\n**Team OPGG:** <https://www.op.gg/multisearch/euw?summoners=${encoded}>\n`;
-  }
-
   text += `\n✅ Scrim confirmé !`;
 
   const msg = await inviteChannel.send(text);
@@ -374,7 +364,22 @@ async function confirmScrim(guild, day) {
     for (const sid of subs) {
       try { await thread.members.add(sid); } catch (e) {}
     }
-    await thread.send(`📢 ${mentions.join(' ')} — Composition prête pour **${day.toUpperCase()}** !`);
+
+    let threadText = `📢 ${mentions.join(' ')} — Composition prête pour **${day.toUpperCase()}** !`;
+
+    threadText += `\n\n**Pour trouver un scrim ce soir**, postez sur **LOL FR** (recrutement/scrim) ou dans vos contacts. Généralement les scrims se jouent vers **20H/21H**. Qui peut s'en occuper ?`;
+
+    const riotIds = ROLES.map(role => {
+      const pid = lineup[role];
+      return playerProfiles[pid]?.riotId;
+    }).filter(Boolean);
+
+    if (riotIds.length > 0) {
+      const encoded = riotIds.map(id => encodeURIComponent(id)).join(',');
+      threadText += `\n\n**Team OPGG:** <https://www.op.gg/multisearch/euw?summoners=${encoded}>`;
+    }
+
+    await thread.send(threadText);
 
     const recent = await inviteChannel.messages.fetch({ limit: 2 });
     const sysMsg = recent.find(m => m.type === MessageType.ThreadCreated && m.thread?.id === thread.id);
