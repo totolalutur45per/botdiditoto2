@@ -912,7 +912,7 @@ cron.schedule('0 0 * * 1', async () => {
 
 function startWebServer() {
   const app = express();
-  const webPort = parseInt(process.env.PORT_WEB || '3001', 10);
+  const webPort = parseInt(process.env.PORT || process.env.PORT_WEB || '3001', 10);
 
   app.use(cors());
   app.use(express.json());
