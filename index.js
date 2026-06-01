@@ -1159,6 +1159,60 @@ function startWebServer() {
     }
   });
 
+  app.put('/api/scrims/:day/reorder', async (req, res) => {
+    const { day } = req.params;
+
+    if (!DAYS.includes(day)) {
+      return res.status(400).json({ error: `Invalid day. Must be one of: ${DAYS.join(', ')}` });
+    }
+
+    const { playerIds } = req.body;
+    if (!Array.isArray(playerIds)) {
+      return res.status(400).json({ error: 'playerIds must be an array' });
+    }
+
+    const current = scrims[day].available;
+    const currentSet = new Set(current);
+    const reorderedSet = new Set(playerIds);
+
+    for (const id of playerIds) {
+      if (!currentSet.has(id)) {
+        return res.status(400).json({ error: `Player ${id} is not in the available list for ${day}` });
+      }
+    }
+    if (reorderedSet.size !== playerIds.length) {
+      return res.status(400).json({ error: 'Duplicate player IDs not allowed' });
+    }
+
+    const lock = locks[day];
+    await lock.acquire();
+    try {
+      scrims[day].available = [...playerIds];
+      const { lineup, substitutes } = calculateBestLineup(day);
+      scrims[day].lineup = lineup || { TOP: null, JGL: null, MID: null, ADC: null, SUPP: null };
+      scrims[day].substitutes = substitutes;
+      await saveState();
+
+      for (const guild of client.guilds.cache.values()) {
+        await updateInviteTable(guild);
+      }
+
+      res.json({
+        day,
+        available: scrims[day].available.map(id => ({ id, name: playerName(id) })),
+        lineup: Object.fromEntries(
+          ROLES.map(r => [r, scrims[day].lineup[r] ? { id: scrims[day].lineup[r], name: playerName(scrims[day].lineup[r]) } : null])
+        ),
+        substitutes: scrims[day].substitutes.map(id => ({ id, name: playerName(id) }))
+      });
+    } catch (err) {
+      console.error('Erreur reorder:', err.message);
+      res.status(500).json({ error: 'Internal server error' });
+    } finally {
+      lock.release();
+    }
+  });
+
   app.put('/api/displayNames', async (req, res) => {
     const { names } = req.body;
     if (!names || typeof names !== 'object') {

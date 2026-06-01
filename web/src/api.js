@@ -69,3 +69,16 @@ export async function searchDiscordUsers(query) {
   }
   return res.json();
 }
+
+export async function reorderPlayers(day, playerIds) {
+  const res = await fetch(`${BASE}/scrims/${day}/reorder`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ playerIds }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to reorder players');
+  }
+  return res.json();
+}

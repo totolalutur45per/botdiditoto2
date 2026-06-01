@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { getScrims, addPlayers, removePlayers, updateDisplayNames, searchDiscordUsers } from '../api';
+import { getScrims, addPlayers, removePlayers, updateDisplayNames, searchDiscordUsers, reorderPlayers } from '../api';
 
 const DAYS = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'];
 
@@ -119,6 +119,34 @@ export default function ScrimAdmin() {
     } finally {
       setSubmitting(false);
     }
+  }
+
+  async function handleReorder(playerIds) {
+    setSubmitting(true);
+    setActionLog(prev => [...prev, `Reordering ${day} queue...`]);
+    try {
+      const result = await reorderPlayers(day, playerIds);
+      setScrims(prev => ({ ...prev, [day]: result }));
+      setActionLog(prev => [...prev, `✅ Queue reordered for ${day}`]);
+    } catch (err) {
+      setActionLog(prev => [...prev, `❌ Error: ${err.message}`]);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function handleMoveUp(index) {
+    if (index === 0 || !currentScrim?.available) return;
+    const ids = currentScrim.available.map(p => p.id);
+    [ids[index - 1], ids[index]] = [ids[index], ids[index - 1]];
+    handleReorder(ids);
+  }
+
+  function handleMoveDown(index) {
+    if (!currentScrim?.available || index >= currentScrim.available.length - 1) return;
+    const ids = currentScrim.available.map(p => p.id);
+    [ids[index], ids[index + 1]] = [ids[index + 1], ids[index]];
+    handleReorder(ids);
   }
 
   async function handleSearchChange(value) {
@@ -249,16 +277,24 @@ export default function ScrimAdmin() {
         {currentScrim && (
           <div className="admin-current">
             <div className="admin-available">
-              <h4>Available ({currentScrim.available?.length || 0})</h4>
-              <div className="admin-player-list">
-                {currentScrim.available?.map(p => (
-                  <span key={p.id} className="admin-player-chip">
-                    {p.name || p.id}
-                    <button className="chip-remove" onClick={() => handleRemoveFromBoard(p.id, day)} disabled={submitting} title="Remove">×</button>
-                  </span>
-                ))}
-                {(currentScrim.available?.length || 0) === 0 && <span className="dim">No players</span>}
-              </div>
+              <h4>Queue Order ({currentScrim.available?.length || 0})</h4>
+              {(currentScrim.available?.length || 0) === 0 ? (
+                <span className="dim">No players</span>
+              ) : (
+                <ol className="admin-queue-list">
+                  {currentScrim.available?.map((p, i) => (
+                    <li key={p.id} className="admin-queue-item">
+                      <span className="queue-pos">{i + 1}</span>
+                      <span className="queue-name">{p.name || p.id}</span>
+                      <div className="queue-controls">
+                        <button className="queue-btn" onClick={() => handleMoveUp(i)} disabled={submitting || i === 0} title="Move up">↑</button>
+                        <button className="queue-btn" onClick={() => handleMoveDown(i)} disabled={submitting || i === (currentScrim.available?.length || 0) - 1} title="Move down">↓</button>
+                        <button className="chip-remove" onClick={() => handleRemoveFromBoard(p.id, day)} disabled={submitting} title="Remove">×</button>
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              )}
             </div>
             <div className="admin-lineup">
               <h4>Lineup</h4>
