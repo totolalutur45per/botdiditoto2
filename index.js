@@ -1023,6 +1023,7 @@ function startWebServer() {
 
         for (const guild of client.guilds.cache.values()) {
           await updateInviteTable(guild);
+          await tryPostConfirmation(guild, day);
         }
       }
 
@@ -1086,6 +1087,14 @@ function startWebServer() {
 
         for (const guild of client.guilds.cache.values()) {
           await updateInviteTable(guild);
+          await tryPostConfirmation(guild, day);
+          if (!lineup && scrims[day].available.length > 0) {
+            const inviteChannel = guild.channels.cache.find(c => c.name === INVITE_CHANNEL);
+            if (inviteChannel) {
+              const remainingMentions = scrims[day].available.map(id => `<@${id}>`).join(' ');
+              await inviteChannel.send(`⚠️ **${day.toUpperCase()}** — Un joueur a été retiré ! Il reste **${scrims[day].available.length}/5** inscrits. ${remainingMentions}, il faut chercher un last pour ce soir`);
+            }
+          }
         }
       }
 
@@ -1195,6 +1204,7 @@ function startWebServer() {
 
       for (const guild of client.guilds.cache.values()) {
         await updateInviteTable(guild);
+        await tryPostConfirmation(guild, day);
       }
 
       res.json({
