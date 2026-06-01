@@ -905,12 +905,6 @@ cron.schedule('30 5 * * *', async () => {
   }
 }, { timezone: TIMEZONE });
 
-cron.schedule('0 0 * * 1', async () => {
-  console.log('Reset automatique de la semaine');
-  for (const guild of client.guilds.cache.values()) {
-    await fullReset(guild);
-  }
-}, { timezone: TIMEZONE });
 
 function startWebServer() {
   const app = express();
