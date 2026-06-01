@@ -227,7 +227,7 @@ function buildInviteContent() {
     const date = dayDate(day);
 
     if (complete) {
-      text += `\n**${day.toUpperCase()} ${date}** — ${count} players (continuez a vous inscrire, lineup lock ${day} a 05:30)\n`;
+      text += `\n📅 **${day.toUpperCase()} ${date}**\n👥 **${count}** joueurs inscrits — 🔓 Inscrivez-vous !\n`;
 
       const parts = [];
       const scores = [];
