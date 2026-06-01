@@ -984,6 +984,187 @@ function startWebServer() {
     res.json(result);
   });
 
+  app.post('/api/scrims/:day/available', async (req, res) => {
+    const { day } = req.params;
+
+    if (!DAYS.includes(day)) {
+      return res.status(400).json({ error: `Invalid day. Must be one of: ${DAYS.join(', ')}` });
+    }
+
+    const { playerIds } = req.body;
+    if (!Array.isArray(playerIds) || playerIds.length === 0) {
+      return res.status(400).json({ error: 'playerIds must be a non-empty array of Discord user IDs' });
+    }
+
+    const lock = locks[day];
+    await lock.acquire();
+    try {
+      const added = [];
+      const skipped = [];
+
+      for (const id of playerIds) {
+        if (typeof id !== 'string' || !/^\d+$/.test(id)) {
+          skipped.push({ id, reason: 'invalid format' });
+          continue;
+        }
+        if (scrims[day].available.includes(id)) {
+          skipped.push({ id, reason: 'already registered' });
+          continue;
+        }
+        scrims[day].available.push(id);
+        added.push(id);
+      }
+
+      if (added.length > 0) {
+        const { lineup, substitutes } = calculateBestLineup(day);
+        scrims[day].lineup = lineup || { TOP: null, JGL: null, MID: null, ADC: null, SUPP: null };
+        scrims[day].substitutes = substitutes;
+        await saveState();
+
+        for (const guild of client.guilds.cache.values()) {
+          await updateInviteTable(guild);
+        }
+      }
+
+      res.json({
+        day,
+        added: added.map(id => ({ id, name: playerName(id) })),
+        skipped,
+        available: scrims[day].available.map(id => ({ id, name: playerName(id) })),
+        lineup: Object.fromEntries(
+          ROLES.map(r => [r, scrims[day].lineup[r] ? { id: scrims[day].lineup[r], name: playerName(scrims[day].lineup[r]) } : null])
+        ),
+        substitutes: scrims[day].substitutes.map(id => ({ id, name: playerName(id) }))
+      });
+    } catch (err) {
+      console.error('Erreur POST scrims available:', err.message);
+      res.status(500).json({ error: 'Internal server error' });
+    } finally {
+      lock.release();
+    }
+  });
+
+  app.post('/api/scrims/:day/remove', async (req, res) => {
+    const { day } = req.params;
+
+    if (!DAYS.includes(day)) {
+      return res.status(400).json({ error: `Invalid day. Must be one of: ${DAYS.join(', ')}` });
+    }
+
+    const { playerIds } = req.body;
+    if (!Array.isArray(playerIds) || playerIds.length === 0) {
+      return res.status(400).json({ error: 'playerIds must be a non-empty array of Discord user IDs' });
+    }
+
+    const lock = locks[day];
+    await lock.acquire();
+    try {
+      const removed = [];
+      const skipped = [];
+
+      for (const id of playerIds) {
+        if (!scrims[day].available.includes(id)) {
+          skipped.push({ id, reason: 'not registered' });
+          continue;
+        }
+        scrims[day].available = scrims[day].available.filter(pid => pid !== id);
+
+        for (const role of ROLES) {
+          if (scrims[day].lineup[role] === id) {
+            scrims[day].lineup[role] = null;
+          }
+        }
+        scrims[day].substitutes = scrims[day].substitutes.filter(pid => pid !== id);
+        removed.push(id);
+      }
+
+      if (removed.length > 0) {
+        const { lineup, substitutes } = calculateBestLineup(day);
+        scrims[day].lineup = lineup || { TOP: null, JGL: null, MID: null, ADC: null, SUPP: null };
+        scrims[day].substitutes = substitutes;
+        await saveState();
+
+        for (const guild of client.guilds.cache.values()) {
+          await updateInviteTable(guild);
+        }
+      }
+
+      res.json({
+        day,
+        removed: removed.map(id => ({ id, name: playerName(id) })),
+        skipped,
+        available: scrims[day].available.map(id => ({ id, name: playerName(id) })),
+        lineup: Object.fromEntries(
+          ROLES.map(r => [r, scrims[day].lineup[r] ? { id: scrims[day].lineup[r], name: playerName(scrims[day].lineup[r]) } : null])
+        ),
+        substitutes: scrims[day].substitutes.map(id => ({ id, name: playerName(id) }))
+      });
+    } catch (err) {
+      console.error('Erreur POST scrims remove:', err.message);
+      res.status(500).json({ error: 'Internal server error' });
+    } finally {
+      lock.release();
+    }
+  });
+
+  app.get('/api/discord/search', async (req, res) => {
+    const { q } = req.query;
+    if (!q || q.trim().length < 2) {
+      return res.status(400).json({ error: 'Query must be at least 2 characters' });
+    }
+
+    try {
+      const results = [];
+      const query = q.trim().toLowerCase();
+      for (const guild of client.guilds.cache.values()) {
+        let members;
+        try {
+          members = await guild.members.search({ query: q.trim(), limit: 10 });
+        } catch (e) {
+          members = guild.members.cache.filter(m =>
+            m.user.username.toLowerCase().includes(query) ||
+            (m.nickname && m.nickname.toLowerCase().includes(query))
+          ).values();
+        }
+        for (const member of members) {
+          results.push({
+            id: member.user.id,
+            username: member.user.username,
+            displayName: member.displayName || member.user.globalName || member.user.username,
+            guildName: guild.name
+          });
+        }
+      }
+
+      const seen = new Set();
+      const unique = results.filter(r => {
+        if (seen.has(r.id)) return false;
+        seen.add(r.id);
+        return true;
+      });
+
+      res.json(unique.slice(0, 20));
+    } catch (err) {
+      console.error('Erreur discord search:', err.message);
+      res.status(500).json({ error: 'Search failed' });
+    }
+  });
+
+  app.put('/api/displayNames', async (req, res) => {
+    const { names } = req.body;
+    if (!names || typeof names !== 'object') {
+      return res.status(400).json({ error: 'names must be an object mapping user IDs to display names' });
+    }
+
+    for (const [id, name] of Object.entries(names)) {
+      if (typeof id !== 'string' || typeof name !== 'string') continue;
+      displayNames[id] = name;
+    }
+
+    await saveState();
+    res.json({ displayNames });
+  });
+
   const staticDir = path.join(__dirname, 'web', 'dist');
   app.use(express.static(staticDir));
   app.get('/{*path}', (req, res) => {

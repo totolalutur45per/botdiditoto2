@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import PlayerTable from './components/PlayerTable';
 import ScrimBoard from './components/ScrimBoard';
+import ScrimAdmin from './components/ScrimAdmin';
 import './App.css';
 
 const TABS = [
   { id: 'players', label: 'Players' },
   { id: 'scrims', label: 'Scrims' },
+  { id: 'admin', label: 'Admin' },
 ];
 
 function App() {
@@ -30,6 +32,7 @@ function App() {
       <main className="app-main">
         {activeTab === 'players' && <PlayerTable />}
         {activeTab === 'scrims' && <ScrimBoard />}
+        {activeTab === 'admin' && <ScrimAdmin />}
       </main>
     </div>
   );
