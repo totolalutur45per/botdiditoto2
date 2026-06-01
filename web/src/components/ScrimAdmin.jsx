@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { getScrims, addPlayers, removePlayers, updateDisplayNames, searchDiscordUsers } from '../api';
 
 const DAYS = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'];
@@ -16,6 +16,7 @@ export default function ScrimAdmin() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
+  const searchTimeoutRef = useRef(null);
 
   const fetchScrims = useCallback(async () => {
     try {
@@ -120,22 +121,23 @@ export default function ScrimAdmin() {
     }
   }
 
-  let searchTimeout;
   async function handleSearchChange(value) {
     setSearchQuery(value);
     setSearchResults([]);
-    clearTimeout(searchTimeout);
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     if (value.trim().length < 2) return;
 
     setSearching(true);
-    try {
-      const results = await searchDiscordUsers(value.trim());
-      setSearchResults(results);
-    } catch (err) {
-      setError(err.message.includes('not valid JSON') ? 'Discord search not available — make sure the bot is running with the latest code' : err.message);
-    } finally {
-      setSearching(false);
-    }
+    searchTimeoutRef.current = setTimeout(async () => {
+      try {
+        const results = await searchDiscordUsers(value.trim());
+        setSearchResults(results);
+      } catch (err) {
+        setError(err.message.includes('not valid JSON') ? 'Discord search not available — make sure the bot is running with the latest code' : err.message);
+      } finally {
+        setSearching(false);
+      }
+    }, 800);
   }
 
   function selectUser(user) {

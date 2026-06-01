@@ -1107,26 +1107,35 @@ function startWebServer() {
     }
   });
 
+  let lastSearchTime = 0;
+  const SEARCH_COOLDOWN = 2000;
+
   app.get('/api/discord/search', async (req, res) => {
     const { q } = req.query;
     if (!q || q.trim().length < 2) {
       return res.status(400).json({ error: 'Query must be at least 2 characters' });
     }
 
+    const now = Date.now();
+    if (now - lastSearchTime < SEARCH_COOLDOWN) {
+      return res.status(429).json({ error: 'Too many requests. Please wait.' });
+    }
+    lastSearchTime = now;
+
     try {
       const results = [];
       const query = q.trim().toLowerCase();
       for (const guild of client.guilds.cache.values()) {
-        let members;
+        let memberList;
         try {
-          members = await guild.members.search({ query: q.trim(), limit: 10 });
+          memberList = await guild.members.search({ query: q.trim(), limit: 10 });
         } catch (e) {
-          members = guild.members.cache.filter(m =>
+          memberList = guild.members.cache.filter(m =>
             m.user.username.toLowerCase().includes(query) ||
             (m.nickname && m.nickname.toLowerCase().includes(query))
-          ).values();
+          );
         }
-        for (const member of members) {
+        for (const member of memberList.values()) {
           results.push({
             id: member.user.id,
             username: member.user.username,
