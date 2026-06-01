@@ -697,3 +697,12 @@ body {
 .search-result-id:hover {
   background: rgba(99, 102, 241, 0.2);
 }
+
+.already-badge {
+  font-size: 0.72rem;
+  color: var(--green);
+  background: rgba(16, 185, 129, 0.12);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+}

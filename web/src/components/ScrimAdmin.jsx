@@ -9,8 +9,6 @@ export default function ScrimAdmin() {
   const [error, setError] = useState(null);
   const [actionLog, setActionLog] = useState([]);
   const [day, setDay] = useState('lundi');
-  const [playerInput, setPlayerInput] = useState('');
-  const [nameInput, setNameInput] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -34,72 +32,18 @@ export default function ScrimAdmin() {
     fetchScrims();
   }, [fetchScrims]);
 
-  function parsePlayerIds(input) {
-    return [...new Set(input.trim().split(/[\s,]+/).filter(Boolean))];
-  }
-
-  function parseNames(input) {
-    const pairs = input.trim().split('\n').filter(Boolean);
-    const names = {};
-    for (const pair of pairs) {
-      const [id, ...rest] = pair.split(/[:=,]/);
-      if (id && rest.length > 0) {
-        names[id.trim()] = rest.join('').trim();
-      }
-    }
-    return names;
-  }
-
-  async function handleAdd() {
-    const ids = parsePlayerIds(playerInput);
-    if (ids.length === 0) return;
-
+  async function handleAddFromSearch(user) {
     setSubmitting(true);
-    setActionLog(prev => [...prev, `Adding ${ids.length} player(s) to ${day}...`]);
+    setActionLog(prev => [...prev, `Adding ${user.displayName || user.username} to ${day}...`]);
     try {
-      const result = await addPlayers(day, ids);
+      const [result] = await Promise.all([
+        addPlayers(day, [user.id]),
+        updateDisplayNames({ [user.id]: user.displayName || user.username })
+      ]);
       setScrims(prev => ({ ...prev, [day]: result }));
-      const addedNames = result.added?.map(p => p.name || p.id).join(', ') || '';
-      const skippedNames = result.skipped?.map(s => `${s.id}: ${s.reason}`).join(', ') || '';
-      setActionLog(prev => [...prev, `✅ Added to ${day}: ${addedNames}${skippedNames ? ` | Skipped: ${skippedNames}` : ''}`]);
-      setPlayerInput('');
-    } catch (err) {
-      setActionLog(prev => [...prev, `❌ Error: ${err.message}`]);
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function handleRemove() {
-    const ids = parsePlayerIds(playerInput);
-    if (ids.length === 0) return;
-
-    setSubmitting(true);
-    setActionLog(prev => [...prev, `Removing ${ids.length} player(s) from ${day}...`]);
-    try {
-      const result = await removePlayers(day, ids);
-      setScrims(prev => ({ ...prev, [day]: result }));
-      const removedNames = result.removed?.map(p => p.name || p.id).join(', ') || '';
-      setActionLog(prev => [...prev, `✅ Removed from ${day}: ${removedNames || 'none'}`]);
-      setPlayerInput('');
-    } catch (err) {
-      setActionLog(prev => [...prev, `❌ Error: ${err.message}`]);
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function handleUpdateNames() {
-    const names = parseNames(nameInput);
-    if (Object.keys(names).length === 0) return;
-
-    setSubmitting(true);
-    setActionLog(prev => [...prev, `Updating ${Object.keys(names).length} display name(s)...`]);
-    try {
-      await updateDisplayNames(names);
-      setActionLog(prev => [...prev, `✅ Display names updated`]);
-      setNameInput('');
-      await fetchScrims();
+      setActionLog(prev => [...prev, `✅ Added ${user.displayName || user.username} to ${day}`]);
+      setSearchQuery('');
+      setSearchResults([]);
     } catch (err) {
       setActionLog(prev => [...prev, `❌ Error: ${err.message}`]);
     } finally {
@@ -168,15 +112,6 @@ export default function ScrimAdmin() {
     }, 800);
   }
 
-  function selectUser(user) {
-    const currentIds = playerInput.trim() ? playerInput.trim() + '\n' : '';
-    setPlayerInput(currentIds + user.id);
-    const currentNames = nameInput.trim() ? nameInput.trim() + '\n' : '';
-    setNameInput(currentNames + `${user.id}:${user.displayName || user.username}`);
-    setSearchQuery('');
-    setSearchResults([]);
-  }
-
   function copyId(id) {
     navigator.clipboard.writeText(id);
     setActionLog(prev => [...prev, `📋 Copied: ${id}`]);
@@ -190,61 +125,8 @@ export default function ScrimAdmin() {
     <div className="scrim-admin">
       {error && <div className="error-banner">{error}</div>}
 
-      <div className="admin-sections">
-        <section className="admin-section">
-          <h3>🔍 Discord User Lookup</h3>
-          <div className="admin-form">
-            <label>
-              Search by username:
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={e => handleSearchChange(e.target.value)}
-                placeholder="Type a Discord username..."
-                className="search-input"
-              />
-            </label>
-            {searching && <div className="dim">Searching...</div>}
-            {searchResults.length > 0 && (
-              <div className="search-results">
-                {searchResults.map(user => (
-                  <div key={user.id} className="search-result-row">
-                    <div className="search-result-info">
-                      <span className="search-result-name">{user.displayName || user.username}</span>
-                      <span className="search-result-username">@{user.username}</span>
-                      <code className="search-result-id" onClick={() => copyId(user.id)} title="Click to copy">{user.id}</code>
-                    </div>
-                    <button className="admin-btn add" onClick={() => selectUser(user)} disabled={submitting}>
-                      + Add
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </section>
-
-        <section className="admin-section">
-          <h3>Set Display Names</h3>
-          <div className="admin-form">
-            <label>
-              Names (one per line, format: DiscordUserId:DisplayName):
-              <textarea
-                value={nameInput}
-                onChange={e => setNameInput(e.target.value)}
-                placeholder={"123456789:playerName\n987654321:anotherName"}
-                rows={4}
-              />
-            </label>
-            <button onClick={handleUpdateNames} disabled={submitting || !nameInput.trim()} className="admin-btn add">
-              Update Names
-            </button>
-          </div>
-        </section>
-      </div>
-
       <section className="admin-section">
-        <h3>Add / Remove Players</h3>
+        <h3>🔍 Add Player to {day.toUpperCase()}</h3>
         <div className="admin-form">
           <label>
             Day:
@@ -253,27 +135,45 @@ export default function ScrimAdmin() {
             </select>
           </label>
           <label>
-            Discord User IDs (one per line or comma-separated):
-            <textarea
-              value={playerInput}
-              onChange={e => setPlayerInput(e.target.value)}
-              placeholder="Paste Discord user IDs here, or use the search above to add them"
-              rows={4}
+            Search by Discord username:
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={e => handleSearchChange(e.target.value)}
+              placeholder="Type a Discord username..."
+              className="search-input"
             />
           </label>
-          <div className="admin-btn-row">
-            <button onClick={handleAdd} disabled={submitting || !playerInput.trim()} className="admin-btn add">
-              Add Players
-            </button>
-            <button onClick={handleRemove} disabled={submitting || !playerInput.trim()} className="admin-btn remove">
-              Remove Players
-            </button>
-          </div>
+          {searching && <div className="dim">Searching...</div>}
+          {searchResults.length > 0 && (
+            <div className="search-results">
+              {searchResults.map(user => {
+                const alreadyIn = currentScrim?.available?.some(p => p.id === user.id);
+                return (
+                  <div key={user.id} className="search-result-row">
+                    <div className="search-result-info">
+                      <span className="search-result-name">{user.displayName || user.username}</span>
+                      <span className="search-result-username">@{user.username}</span>
+                      <code className="search-result-id" onClick={() => copyId(user.id)} title="Click to copy">{user.id}</code>
+                      {alreadyIn && <span className="already-badge">✓ in queue</span>}
+                    </div>
+                    <button
+                      className="admin-btn add"
+                      onClick={() => handleAddFromSearch(user)}
+                      disabled={submitting || alreadyIn}
+                    >
+                      {alreadyIn ? 'Added' : '+ Add'}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </section>
 
       <section className="admin-section">
-        <h3>Current State — {day.toUpperCase()}</h3>
+        <h3>Queue — {day.toUpperCase()}</h3>
         {currentScrim && (
           <div className="admin-current">
             <div className="admin-available">
