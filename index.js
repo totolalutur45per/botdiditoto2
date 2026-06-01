@@ -248,7 +248,8 @@ function buildInviteContent() {
       }
 
       const total = scores.reduce((a, b) => a + Number(b), 0);
-      text += `Lineup: **${total}** (${scores.join('+')})\n`;
+      const lineupLabel = !isDayLocked(day) && count >= 5 ? 'Best lineup' : 'Lineup';
+      text += `${lineupLabel}: **${total}** (${scores.join('+')})\n`;
     } else if (count > 0) {
       text += scrims[day].available.map(id => playerName(id)).join(' · ') + '\n';
     }
