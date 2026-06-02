@@ -542,10 +542,6 @@ async function handleCommand(interaction) {
     const prefs = playerProfiles[user.id];
     const hasTooMany3s = prefs && ROLES.filter(r => prefs[r] === 3).length > 1;
     if (hasTooMany3s) {
-      await interaction.reply({
-        content: '⚠️ Tu as plusieurs rôles définis comme "principal" (valeur 3). Corrige pour n\'en garder qu\'un seul.',
-        ephemeral: true
-      });
       const modal = showPrefModal(user.id, 'SETPREF');
       await interaction.showModal(modal);
       return;
