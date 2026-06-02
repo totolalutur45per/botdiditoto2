@@ -525,12 +525,19 @@ client.once(Events.ClientReady, async () => {
 });
 
 client.on(Events.InteractionCreate, async interaction => {
-  if (interaction.isChatInputCommand()) {
-    await handleCommand(interaction);
-  } else if (interaction.isButton()) {
-    await handleButton(interaction);
-  } else if (interaction.isModalSubmit()) {
-    await handleModal(interaction);
+  try {
+    if (interaction.isChatInputCommand()) {
+      await handleCommand(interaction);
+    } else if (interaction.isButton()) {
+      await handleButton(interaction);
+    } else if (interaction.isModalSubmit()) {
+      await handleModal(interaction);
+    }
+  } catch (err) {
+    console.error('Erreur InteractionCreate:', err);
+    if (!interaction.replied && !interaction.deferred) {
+      try { await interaction.reply({ content: `❌ Erreur interne: ${err.message}`, ephemeral: true }); } catch (e) {}
+    }
   }
 });
 
@@ -781,8 +788,13 @@ async function handleButton(interaction) {
   const prefs = playerProfiles[userId];
   const invalidPrefs = prefs && ROLES.filter(r => prefs[r] === 3).length > 1;
   if (!hasProfile(userId) || invalidPrefs) {
-    const modal = showPrefModal(userId, day);
-    await interaction.showModal(modal);
+    try {
+      const modal = showPrefModal(userId, day);
+      await interaction.showModal(modal);
+    } catch (e) {
+      console.error('Erreur showModal DISPO pref:', e);
+      await interaction.reply({ content: `❌ Erreur: ${e.message}`, ephemeral: true });
+    }
     return;
   }
 
