@@ -426,7 +426,7 @@ function showPrefModal(userId, day = null) {
   const customId = day ? `PREF_MODAL:${userId}:${day}` : `PREF_MODAL:${userId}`;
   const modal = new ModalBuilder()
     .setCustomId(customId)
-    .setTitle('Préférences de rôles (0-3, un seul 3 possible)');
+    .setTitle('Préférences rôles (0-3 max 1 rôle 3)');
 
   for (const role of ROLES) {
     const current = playerProfiles[userId]?.[role] || 1;
@@ -434,7 +434,7 @@ function showPrefModal(userId, day = null) {
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
           .setCustomId(`PREF_${role}`)
-          .setLabel(`${role} (0=ne joue pas, 3=rôle principal)`)
+          .setLabel(`${role} (0=non, 3=principal, un seul 3)`)
           .setStyle(TextInputStyle.Short)
           .setValue(String(current))
           .setRequired(true)
