@@ -694,10 +694,10 @@ async function handleModal(interaction) {
 
   const count3 = ROLES.filter(r => playerProfiles[userId][r] === 3).length;
   if (count3 > 1) {
-    return interaction.reply({
-      content: '❌ Erreur : Un seul rôle peut être défini comme "rôle principal" (valeur 3). Les autres doivent être à 2 ou moins.',
-      ephemeral: true
-    });
+    const [, , context] = customId.split(':');
+    const modal = showPrefModal(userId, context);
+    await interaction.showModal(modal);
+    return;
   }
 
   displayNames[userId] = user.username;
