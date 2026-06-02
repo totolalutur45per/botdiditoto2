@@ -136,24 +136,30 @@ function evaluateCombo(combo) {
   let bestScore = -1;
   let bestAssignment = null;
   let bestTiebreaker = 0;
+  let bestMainRoles = 0;
 
   for (const roleOrder of ROLE_PERMUTATIONS) {
     let score = 0;
     let tiebreaker = 0;
+    let mainRoles = 0;
     for (let i = 0; i < combo.length; i++) {
       const prefs = playerProfiles[combo[i]] || {};
       const pref = prefs[roleOrder[i]] || 0;
       score += pref;
-      if (pref === 3) tiebreaker += combo.length - i;
+      if (pref === 3) {
+        mainRoles++;
+        tiebreaker += combo.length - i;
+      }
     }
     if (score > bestScore || (score === bestScore && tiebreaker > bestTiebreaker)) {
       bestScore = score;
       bestAssignment = roleOrder;
       bestTiebreaker = tiebreaker;
+      bestMainRoles = mainRoles;
     }
   }
 
-  return { score: bestScore, assignment: bestAssignment };
+  return { score: bestScore, assignment: bestAssignment, mainRoles: bestMainRoles };
 }
 
 function calculateBestLineup(day) {
@@ -167,13 +173,15 @@ function calculateBestLineup(day) {
   let bestScore = -1;
   let bestCombination = null;
   let bestAssignment = null;
+  let bestMainRoles = 0;
 
   for (const combo of combinations) {
-    const { score, assignment } = evaluateCombo(combo);
-    if (score > bestScore) {
+    const { score, assignment, mainRoles } = evaluateCombo(combo);
+    if (score > bestScore || (score === bestScore && mainRoles > bestMainRoles)) {
       bestScore = score;
       bestCombination = combo;
       bestAssignment = assignment;
+      bestMainRoles = mainRoles;
     }
   }
 
@@ -418,7 +426,7 @@ function showPrefModal(userId, day = null) {
   const customId = day ? `PREF_MODAL:${userId}:${day}` : `PREF_MODAL:${userId}`;
   const modal = new ModalBuilder()
     .setCustomId(customId)
-    .setTitle('Préférences de rôles (0-3)');
+    .setTitle('Préférences de rôles (0-3, un seul 3 possible)');
 
   for (const role of ROLES) {
     const current = playerProfiles[userId]?.[role] || 1;
@@ -426,7 +434,7 @@ function showPrefModal(userId, day = null) {
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
           .setCustomId(`PREF_${role}`)
-          .setLabel(`${role} (0=ne joue pas, 3=préféré)`)
+          .setLabel(`${role} (0=ne joue pas, 3=rôle principal)`)
           .setStyle(TextInputStyle.Short)
           .setValue(String(current))
           .setRequired(true)
@@ -531,6 +539,17 @@ async function handleCommand(interaction) {
 
   if (commandName === 'setpref') {
     displayNames[user.id] = user.username;
+    const prefs = playerProfiles[user.id];
+    const hasTooMany3s = prefs && ROLES.filter(r => prefs[r] === 3).length > 1;
+    if (hasTooMany3s) {
+      await interaction.reply({
+        content: '⚠️ Tu as plusieurs rôles définis comme "principal" (valeur 3). Corrige pour n\'en garder qu\'un seul.',
+        ephemeral: true
+      });
+      const modal = showPrefModal(user.id, 'SETPREF');
+      await interaction.showModal(modal);
+      return;
+    }
     const modal = showRiotIdModal(user.id, 'SETPREF');
     await interaction.showModal(modal);
     return;
@@ -670,6 +689,14 @@ async function handleModal(interaction) {
     });
   }
 
+  const count3 = ROLES.filter(r => playerProfiles[userId][r] === 3).length;
+  if (count3 > 1) {
+    return interaction.reply({
+      content: '❌ Erreur : Un seul rôle peut être défini comme "rôle principal" (valeur 3). Les autres doivent être à 2 ou moins.',
+      ephemeral: true
+    });
+  }
+
   displayNames[userId] = user.username;
   await saveState();
 
@@ -755,7 +782,9 @@ async function handleButton(interaction) {
     return;
   }
 
-  if (!hasProfile(userId)) {
+  const prefs = playerProfiles[userId];
+  const invalidPrefs = prefs && ROLES.filter(r => prefs[r] === 3).length > 1;
+  if (!hasProfile(userId) || invalidPrefs) {
     const modal = showPrefModal(userId, day);
     await interaction.showModal(modal);
     return;
@@ -936,6 +965,12 @@ function startWebServer() {
       if (isNaN(score) || score < 0 || score > 3) {
         return res.status(400).json({ error: `${role} must be 0-3` });
       }
+    }
+
+    const currentPrefs = { ...(playerProfiles[id] || {}), ...preferences };
+    const count3 = ROLES.filter(r => currentPrefs[r] === 3).length;
+    if (count3 > 1) {
+      return res.status(400).json({ error: 'Only one role can be set as main role (value 3). Others must be 2 or less.' });
     }
 
     if (!playerProfiles[id]) playerProfiles[id] = {};
