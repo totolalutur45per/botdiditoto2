@@ -695,9 +695,17 @@ async function handleModal(interaction) {
   const count3 = ROLES.filter(r => playerProfiles[userId][r] === 3).length;
   if (count3 > 1) {
     const [, , context] = customId.split(':');
-    const modal = showPrefModal(userId, context);
-    await interaction.showModal(modal);
-    return;
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`PREF_FIX:${context || ''}`)
+        .setLabel('Modifier mes rôles')
+        .setStyle(ButtonStyle.Danger)
+    );
+    return interaction.reply({
+      content: '❌ Un seul rôle peut être "principal" (valeur 3). Corrige pour continuer.',
+      components: [row],
+      ephemeral: true
+    });
   }
 
   displayNames[userId] = user.username;
@@ -776,6 +784,13 @@ async function handleButton(interaction) {
 
   if (action === 'SETPREF_CONTINUE') {
     const modal = showPrefModal(userId);
+    await interaction.showModal(modal);
+    return;
+  }
+
+  if (action === 'PREF_FIX') {
+    const context = parts[1];
+    const modal = showPrefModal(userId, context || null);
     await interaction.showModal(modal);
     return;
   }
