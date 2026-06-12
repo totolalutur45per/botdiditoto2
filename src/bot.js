@@ -443,28 +443,40 @@ async function handleButton(interaction) {
 }
 
 cron.schedule('30 5 * * *', async () => {
-  console.log('Vérification auto des scrims (05:30)');
+  try {
+    console.log('Vérification auto des scrims (05:30)');
 
-  const jsDay = new Date().getDay();
-  const today = state.DAYS[(jsDay + 6) % 7];
-  const todayIdx = state.DAYS.indexOf(today);
-  const prevDay = state.DAYS[(todayIdx + 6) % 7];
+    const jsDay = new Date().getDay();
+    const today = state.DAYS[(jsDay + 6) % 7];
+    const todayIdx = state.DAYS.indexOf(today);
+    const prevDay = state.DAYS[(todayIdx + 6) % 7];
 
-  for (const guild of client.guilds.cache.values()) {
-    await discord.cleanupOldConfirmations(guild);
-    await discord.resetDay(guild, prevDay);
-  }
+    for (const guild of client.guilds.cache.values()) {
+      try {
+        await discord.cleanupOldConfirmations(guild);
+        await discord.resetDay(guild, prevDay);
+      } catch (e) {
+        console.error(`Erreur cleanup/reset pour ${guild.name}:`, e.message);
+      }
+    }
 
-  await state.saveState();
+    await state.saveState();
 
-  if (!state.scrims[today] || state.scrims[today].available.length < 5) return;
+    if (!state.scrims[today] || state.scrims[today].available.length < 5) return;
 
-  const { lineup, substitutes } = scrims.calculateBestLineup(today);
-  state.scrims[today].lineup = lineup || { TOP: null, JGL: null, MID: null, ADC: null, SUPP: null };
-  state.scrims[today].substitutes = substitutes;
+    const { lineup, substitutes } = scrims.calculateBestLineup(today);
+    state.scrims[today].lineup = lineup || { TOP: null, JGL: null, MID: null, ADC: null, SUPP: null };
+    state.scrims[today].substitutes = substitutes;
 
-  for (const guild of client.guilds.cache.values()) {
-    await discord.tryPostConfirmation(guild, today);
+    for (const guild of client.guilds.cache.values()) {
+      try {
+        await discord.tryPostConfirmation(guild, today);
+      } catch (e) {
+        console.error(`Erreur confirmation pour ${guild.name}:`, e.message);
+      }
+    }
+  } catch (err) {
+    console.error('Erreur cron 05:30:', err);
   }
 }, { timezone: state.TIMEZONE });
 
