@@ -360,7 +360,7 @@ function startWebServer() {
 
   const staticDir = path.join(__dirname, '..', 'web', 'dist');
   app.use(express.static(staticDir));
-  app.get('*', (req, res) => {
+  app.get('/{*path}', (req, res) => {
     res.sendFile(path.join(staticDir, 'index.html'), (err) => {
       if (err) res.status(404).send('Web dashboard not built. Run: cd web && npm run build');
     });
