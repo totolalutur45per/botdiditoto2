@@ -78,8 +78,61 @@ client.once(Events.ClientReady, async () => {
 
     await discord.syncGuildChannels(guild);
   }
+
+  await catchUpDailyTransition();
   console.log('Prêt.');
 });
+
+async function catchUpDailyTransition() {
+  try {
+    const now = new Date();
+    const parisTime = now.toLocaleString('fr-FR', { timeZone: state.TIMEZONE, hour: '2-digit', minute: '2-digit', hour12: false });
+    const [h, m] = parisTime.split(':').map(Number);
+    const isPastTransition = h > 5 || (h === 5 && m >= 30);
+
+    if (!isPastTransition) return;
+
+    const jsDay = new Date().getDay();
+    const today = state.DAYS[(jsDay + 6) % 7];
+    const todayIdx = state.DAYS.indexOf(today);
+    const prevDay = state.DAYS[(todayIdx + 6) % 7];
+
+    const prevScrims = state.scrims[prevDay];
+    const todayScrims = state.scrims[today];
+    const alreadyTransitioned = prevScrims && prevScrims.available.length === 0 && prevScrims.lineup.TOP === null;
+
+    if (alreadyTransitioned) return;
+
+    console.log(`Recovery: transition du jour manquée, exécution (${today})`);
+
+    for (const guild of client.guilds.cache.values()) {
+      try {
+        await discord.cleanupOldConfirmations(guild);
+        await discord.resetDay(guild, prevDay);
+      } catch (e) {
+        console.error(`Erreur cleanup/reset recovery pour ${guild.name}:`, e.message);
+      }
+    }
+
+    await state.saveState();
+
+    if (!todayScrims || todayScrims.available.length < 5) return;
+
+    const { lineup, substitutes } = scrims.calculateBestLineup(today);
+    todayScrims.lineup = lineup || { TOP: null, JGL: null, MID: null, ADC: null, SUPP: null };
+    todayScrims.substitutes = substitutes;
+
+    for (const guild of client.guilds.cache.values()) {
+      try {
+        await discord.tryPostConfirmation(guild, today);
+      } catch (e) {
+        console.error(`Erreur confirmation recovery pour ${guild.name}:`, e.message);
+      }
+    }
+  } catch (err) {
+    console.error('Erreur catchUpDailyTransition:', err);
+  }
+}
 
 client.on(Events.InteractionCreate, async interaction => {
   try {
@@ -443,28 +496,40 @@ async function handleButton(interaction) {
 }
 
 cron.schedule('30 5 * * *', async () => {
-  console.log('Vérification auto des scrims (05:30)');
+  try {
+    console.log('Vérification auto des scrims (05:30)');
 
-  const jsDay = new Date().getDay();
-  const today = state.DAYS[(jsDay + 6) % 7];
-  const todayIdx = state.DAYS.indexOf(today);
-  const prevDay = state.DAYS[(todayIdx + 6) % 7];
+    const jsDay = new Date().getDay();
+    const today = state.DAYS[(jsDay + 6) % 7];
+    const todayIdx = state.DAYS.indexOf(today);
+    const prevDay = state.DAYS[(todayIdx + 6) % 7];
 
-  for (const guild of client.guilds.cache.values()) {
-    await discord.cleanupOldConfirmations(guild);
-    await discord.resetDay(guild, prevDay);
-  }
+    for (const guild of client.guilds.cache.values()) {
+      try {
+        await discord.cleanupOldConfirmations(guild);
+        await discord.resetDay(guild, prevDay);
+      } catch (e) {
+        console.error(`Erreur cleanup/reset pour ${guild.name}:`, e.message);
+      }
+    }
 
-  await state.saveState();
+    await state.saveState();
 
-  if (!state.scrims[today] || state.scrims[today].available.length < 5) return;
+    if (!state.scrims[today] || state.scrims[today].available.length < 5) return;
 
-  const { lineup, substitutes } = scrims.calculateBestLineup(today);
-  state.scrims[today].lineup = lineup || { TOP: null, JGL: null, MID: null, ADC: null, SUPP: null };
-  state.scrims[today].substitutes = substitutes;
+    const { lineup, substitutes } = scrims.calculateBestLineup(today);
+    state.scrims[today].lineup = lineup || { TOP: null, JGL: null, MID: null, ADC: null, SUPP: null };
+    state.scrims[today].substitutes = substitutes;
 
-  for (const guild of client.guilds.cache.values()) {
-    await discord.tryPostConfirmation(guild, today);
+    for (const guild of client.guilds.cache.values()) {
+      try {
+        await discord.tryPostConfirmation(guild, today);
+      } catch (e) {
+        console.error(`Erreur confirmation pour ${guild.name}:`, e.message);
+      }
+    }
+  } catch (err) {
+    console.error('Erreur cron 05:30:', err);
   }
 }, { timezone: state.TIMEZONE });
 
