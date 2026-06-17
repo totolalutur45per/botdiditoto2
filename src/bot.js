@@ -41,7 +41,10 @@ const commands = [
       option.setName('day')
         .setDescription('Jour à confirmer')
         .setRequired(true)
-        .addChoices(...state.DAYS.map(d => ({ name: d, value: d }))))
+        .addChoices(...state.DAYS.map(d => ({ name: d, value: d })))),
+  new SlashCommandBuilder()
+    .setName('repost')
+    .setDescription('Reposter le message DISPO dans le salon')
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(TOKEN);
@@ -205,6 +208,23 @@ async function handleCommand(interaction) {
     }
     await discord.confirmScrim(guild, day);
     await interaction.editReply(`✅ Message de confirmation reposté pour **${day.toUpperCase()}**\n📌 Fil créé avec les joueurs.`);
+  }
+
+  if (commandName === 'repost') {
+    await interaction.deferReply({ ephemeral: true });
+    const inviteChannel = guild.channels.cache.find(c => c.name === state.INVITE_CHANNEL);
+    if (!inviteChannel) {
+      return interaction.editReply('❌ Salon `invitation-scrim` introuvable. Faites d\'abord `/setup`.');
+    }
+
+    const msgs = await inviteChannel.messages.fetch({ limit: 100 });
+    const dispos = msgs.filter(m => m.author.id === client.user.id && m.content.startsWith('## DISPO'));
+    for (const [, msg] of dispos) {
+      try { await msg.delete(); } catch (e) {}
+    }
+
+    await inviteChannel.send({ content: scrims.buildInviteContent(), components: scrims.buildInviteButtons() });
+    await interaction.editReply('✅ Message DISPO reposté !');
   }
 }
 
